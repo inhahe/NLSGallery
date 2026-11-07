@@ -1,0 +1,14 @@
+# thumbsup2's environment (as of 2026-11-07), plus what export_models.py needs.
+# CPU-only torch is enough for the tools; install it from PyTorch's index first:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0 torchvision
+torch==2.11.0
+transformers==5.5.4
+easyocr==1.7.2
+sentence-transformers==5.4.0
+pillow==12.2.0
+numpy==2.4.4
+opencv-python-headless==4.13.0.92
+safetensors
+onnx==1.23.2
+onnxruntime==1.31.1
+onnxscript
