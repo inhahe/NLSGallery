@@ -1,0 +1,36 @@
+# Gradle / Android build output
+.gradle/
+build/
+/local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.vs/
+
+# Test images (tools/fetch_test_images.py recreates them; COCO photos are not ours to redistribute)
+/tools/testdata/
+
+# Python caches
+__pycache__/
+
+# Scratch output from testing (screenshots, UI dumps, logs)
+/scratch/
+
+# Release signing (kept outside version control)
+/keystore.properties
+*.jks
+*.keystore
+
+# Personal notes
+/todo.txt
+
+# Official weight files for the desktop tests and phone pushes (tools/fetch_weights.py)
+/tools/weights/

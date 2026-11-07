@@ -1,0 +1,41 @@
+{
+ "blip": {
+  "file": "model.safetensors",
+  "url": "https://huggingface.co/Salesforce/blip-image-captioning-base/resolve/4c26dfece70e02028433dd192458a54b390b85d2/model.safetensors",
+  "size": 989721336,
+  "sha256": "90f4c493dfc6f4c2152c8bfcfd52ee141055feb835eea2dceb8b9231e5dbf17c",
+  "graphs": [
+   "blip_decoder.onnx",
+   "blip_vision.onnx"
+  ]
+ },
+ "minilm": {
+  "file": "model.safetensors",
+  "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/model.safetensors",
+  "size": 90868376,
+  "sha256": "53aa51172d142c89d9012cce15ae4d6cc0ca6895895114379cacb4fab128d9db",
+  "graphs": [
+   "minilm.onnx"
+  ]
+ },
+ "craft": {
+  "file": "craft_mlt_25k.pth",
+  "url": "https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip",
+  "size": 83152330,
+  "sha256": "4a5efbfb48b4081100544e75e1e2b57f8de3d84f213004b14b85fd4b3748db17",
+  "graphs": [
+   "craft.onnx"
+  ],
+  "member": "craft_mlt_25k.pth"
+ },
+ "english_g2": {
+  "file": "english_g2.pth",
+  "url": "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/english_g2.zip",
+  "size": 15143997,
+  "sha256": "e2272681d9d67a04e2dff396b6e95077bc19001f8f6d3593c307b9852e1c29e8",
+  "graphs": [
+   "english_g2.onnx"
+  ],
+  "member": "english_g2.pth"
+ }
+}
