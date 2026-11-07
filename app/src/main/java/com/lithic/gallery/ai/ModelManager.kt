@@ -51,7 +51,9 @@ class ModelManager(private val context: Context) {
     val sources: Map<String, ModelSource> = context.assets.open("models/models.json").use {
         Json.decodeFromString<Map<String, ModelSource>>(it.readBytes().decodeToString())
     }
-    private val root = File(context.getExternalFilesDir(null) ?: context.filesDir, "models")
+    // Made by the app itself: a folder adb creates first belongs to the shell user, and the app
+    // could not read what is copied into it (push-models.bat waits for this one).
+    private val root = File(context.getExternalFilesDir(null) ?: context.filesDir, "models").apply { mkdirs() }
 
     private val _state = MutableStateFlow(sources.keys.associateWith { initialState(it) })
     val state: StateFlow<Map<String, ModelState>> = _state
@@ -82,8 +84,14 @@ class ModelManager(private val context: Context) {
         }
     }
 
-    /** Checks weight files that arrived without being downloaded (push-models.bat). */
+    /**
+     * Checks weight files that arrived without being downloaded (push-models.bat), including
+     * ones copied in while the app was running.
+     */
     suspend fun verifyCopied() = withContext(Dispatchers.IO) {
+        for (key in sources.keys) {
+            if (_state.value[key] == ModelState.Missing) set(key, initialState(key))
+        }
         for (key in sources.keys) {
             if (_state.value[key] != ModelState.Verifying || !weights(key).exists()) continue
             val sha = sha256(weights(key))

@@ -31,7 +31,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     private var config: Config? = null
     private var onnx: Onnx? = null
     private var blip: BlipCaptioner? = null
-    private var ocr: EasyOcr? = null
+    private var easyOcr: EasyOcr? = null
     private var minilm: MiniLmEmbedder? = null
 
     val tokenizer: BertTokenizer by lazy {
@@ -44,23 +44,18 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     fun ready(s: Settings): Boolean =
         (s.captions || s.ocr) && ModelManager.needed(s.captions, s.ocr).all(models::isReady)
 
-    /** Timing of the last file described, for the log and the details panel. */
-    data class Timing(val decodeMs: Long, val captionMs: Long, val ocrMs: Long, val embedMs: Long)
-
-    var lastTiming: Timing? = null
-        private set
-
     /**
-     * Describes [item] (the parts [s] asks for that it lacks) and saves the description and
-     * embedding. A file that cannot be read is saved with its error, so it is not retried until
-     * it changes.
+     * Makes the parts of [item]'s description it lacks among those asked for ([captions], [ocr]),
+     * and saves the description and its embedding. A file that cannot be read is saved with its
+     * error, so it is not retried until it changes. Only the models the asked-for parts need are
+     * kept open.
      */
-    suspend fun describe(item: MediaEntity, s: Settings) = mutex.withLock {
+    suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr) = mutex.withLock {
         withContext(Dispatchers.Default) {
-            open(s)
+            open(captions, ocr, s)
             val existing = dao.description(item.aiKey)?.takeIf { it.error == null }
-            val wantCaption = s.captions && existing?.caption == null
-            val wantOcr = s.ocr && existing?.ocr == null
+            val wantCaption = captions && existing?.caption == null
+            val wantOcr = ocr && existing?.ocr == null
             var caption = existing?.caption
             var text = existing?.ocr
             var manual = existing?.manualCaption ?: ""
@@ -79,7 +74,8 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                     }
                     if (wantOcr) {
                         val t = System.nanoTime()
-                        text = ocr!!.text(frames[frames.size / 2])
+                        easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, isVideo = true)
+                        text = easyOcr!!.text(frames[frames.size / 2])
                         tOcr = ms(t)
                     }
                     if (existing == null) manual = MediaDecoding.videoTitle(context, item.contentUri)
@@ -93,7 +89,8 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                     }
                     if (wantOcr) {
                         val t = System.nanoTime()
-                        text = ocr!!.text(img)
+                        easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, isVideo = false)
+                        text = easyOcr!!.text(img)
                         tOcr = ms(t)
                     }
                     if (existing == null) manual = MediaDecoding.manualCaption(context.contentResolver, item.contentUri)
@@ -111,9 +108,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                 return@withContext
             }
             dao.upsertDescription(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(), null))
-            val t = System.nanoTime()
             saveEmbedding(item.aiKey, caption ?: "", text ?: "")
-            lastTiming = Timing(tDecode, tCaption, tOcr, ms(t))
             // Timings only: what the pictures show stays out of the log.
             Log.i(TAG, "described ${item.id}: decode ${tDecode}ms caption ${tCaption}ms ocr ${tOcr}ms")
         }
@@ -129,16 +124,26 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         dao.upsertEmbedding(EmbeddingEntity(hash, MiniLmEmbedder.MODEL_ID, toBytes(v), textHash))
     }
 
-    private fun open(s: Settings) {
-        val want = Config(s.captions, s.ocr, s.aiThreads)
-        if (want == config) { ocr?.canvasSize = s.ocrCanvas; return }
+    private fun open(captions: Boolean, ocr: Boolean, s: Settings) {
+        val want = Config(captions, ocr, s.aiThreads)
+        if (want == config) return
         closeModels()
         val o = Onnx(models.store, OnnxOptions(threads = s.aiThreads))
         onnx = o
-        if (s.captions) blip = BlipCaptioner(o, tokenizer)
-        if (s.ocr) ocr = EasyOcr(o).also { it.canvasSize = s.ocrCanvas }
+        if (captions) blip = BlipCaptioner(o, tokenizer)
+        if (ocr) easyOcr = EasyOcr(o).also { it.maxTilePixels = maxTilePixels() }
         minilm = MiniLmEmbedder(o, tokenizer)
         config = want
+    }
+
+    /**
+     * The most pixels the text detector runs at once: it needs ~1.3 KB per pixel (3.5 GB for a
+     * whole screenshot), so phones with less memory cut images into more, smaller tiles.
+     */
+    private fun maxTilePixels(): Long {
+        val mi = android.app.ActivityManager.MemoryInfo()
+        context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(mi)
+        return if (mi.totalMem >= 7L shl 30) EasyOcr.DEFAULT_MAX_TILE_PIXELS else 1_200_000L
     }
 
     /** Closes the models, freeing their memory (about 1.5 GB with all of them open). */
@@ -146,7 +151,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     private fun closeModels() {
         blip?.close(); blip = null
-        ocr?.close(); ocr = null
+        easyOcr?.close(); easyOcr = null
         minilm?.close(); minilm = null
         onnx = null
         config = null

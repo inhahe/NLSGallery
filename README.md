@@ -66,9 +66,15 @@ From a computer, `push-models.bat` copies them over USB instead (after
 Each one is searchable as soon as it is done. A notification shows progress and has a Stop
 button. **Only while charging** makes the automatic runs wait for the charger.
 
-Videos are described from three frames (captions) and the middle frame (text). Captions, text
-reading and videos can each be switched off; text reading also has a faster, less thorough
-setting.
+Describing goes in two rounds: first a caption for every picture (a couple of seconds each), so
+everything becomes searchable soon; then the text in pictures, which is slower (10 seconds to a
+minute each), screenshots and downloads first. Videos are described from three frames
+(captions) and the middle frame (text). Captions, text reading and videos can each be switched
+off.
+
+**Text reading detail** (Settings → AI): *Balanced* (default) reads screenshots, downloads and
+messages in full detail and camera photos and videos at half size, about 10 seconds each instead
+of a minute; *Full* reads everything as thumbsup2 does; *Fast* reads everything at half size.
 
 ## Building
 

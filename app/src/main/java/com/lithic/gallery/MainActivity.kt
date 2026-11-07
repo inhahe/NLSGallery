@@ -115,7 +115,10 @@ private fun AppRoot(vm: GalleryViewModel) {
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         access = mediaAccess(context)
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { access = mediaAccess(context) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        access = mediaAccess(context)
+        vm.onResume()
+    }
     if (access != Access.FULL) {
         PermissionScreen(access, onRequest = { launcher.launch(mediaPermissions) }, onOpenSettings = {
             context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))

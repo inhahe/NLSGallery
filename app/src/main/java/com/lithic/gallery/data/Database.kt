@@ -116,20 +116,11 @@ interface MediaDao {
     @Query("SELECT * FROM media ORDER BY sortDate DESC, id DESC")
     suspend fun all(): List<MediaEntity>
 
-    @Query("SELECT * FROM media WHERE id = :id")
-    suspend fun byId(id: Long): MediaEntity?
-
-    @Query("SELECT id, generation, dateModified, size FROM media")
-    suspend fun syncState(): List<SyncState>
-
     @Upsert
     suspend fun upsert(items: List<MediaEntity>)
 
     @Query("DELETE FROM media WHERE id IN (:ids)")
     suspend fun delete(ids: List<Long>)
-
-    @Query("SELECT COUNT(*) FROM media")
-    suspend fun count(): Int
 
     @Query("SELECT * FROM display_aspect")
     fun observeAspects(): Flow<List<DisplayAspectEntity>>
@@ -137,8 +128,6 @@ interface MediaDao {
     @Upsert
     suspend fun upsertAspect(a: DisplayAspectEntity)
 }
-
-data class SyncState(val id: Long, val generation: Long, val dateModified: Long, val size: Long)
 
 @Dao
 interface AiDao {
@@ -172,6 +161,18 @@ interface AiDao {
            ORDER BY m.sortDate DESC, m.id DESC"""
     )
     suspend fun undescribed(videos: Boolean, captions: Boolean, ocr: Boolean): List<MediaEntity>
+
+    /**
+     * Files whose text is still to be read, likeliest to hold text first (screenshots, downloads,
+     * messages, other, camera), newest first within each.
+     */
+    @Query(
+        """SELECT m.* FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
+           WHERE (m.isVideo = 0 OR :videos) AND (d.hash IS NULL OR (d.error IS NULL AND d.ocr IS NULL))
+           ORDER BY CASE m.folder WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 4 THEN 3 ELSE 4 END,
+                    m.sortDate DESC, m.id DESC"""
+    )
+    suspend fun withoutText(videos: Boolean): List<MediaEntity>
 
     @Query(
         """SELECT COUNT(*) FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey

@@ -19,8 +19,9 @@ import kotlinx.coroutines.withContext
  * thumbsup2's search page does it: keyword ranking (MiniSearch's BM25+, prefix and fuzzy) blended
  * with meaning (MiniLM embeddings) by Reciprocal Rank Fusion.
  *
- * The index is rebuilt from the database by [refresh] (cheap: tokenizing text) whenever files or
- * descriptions change.
+ * The index is rebuilt from the database (tokenizing every file's text: about a second for
+ * 20,000 files) by the first search after [invalidate], not at every change: while photos are
+ * being described the text changes every couple of seconds.
  */
 class SearchService(
     private val dao: AiDao,
@@ -34,11 +35,18 @@ class SearchService(
     private var mediaIds = LongArray(0)
     private var dates = LongArray(0)
     private var embedder: MiniLmEmbedder? = null
+    @Volatile private var stale = true
+
+    /** Files or descriptions changed: the next search rebuilds the index first. */
+    fun invalidate() {
+        stale = true
+    }
 
     /** A result: the media id and how it was found. */
     data class Result(val mediaId: Long, val score: Double, val semanticOnly: Boolean, val similarity: Float?)
 
-    suspend fun refresh() = withContext(Dispatchers.Default) {
+    private suspend fun refresh() = withContext(Dispatchers.Default) {
+        stale = false
         val rows = dao.searchable().sortedByDescending { it.sortDate }
         val ms = MiniSearch(HybridSearch.FIELDS)
         val ids = LongArray(rows.size)
@@ -71,12 +79,15 @@ class SearchService(
     suspend fun search(query: String, fields: List<String>): List<Result> = withContext(Dispatchers.Default) {
         val q = query.trim()
         if (q.isEmpty()) return@withContext emptyList()
+        if (stale) refresh()
         val queryVector = embed(q)
         mutex.withLock {
             val ds = dates
-            HybridSearch.search(q, index, fields, queryVector, embeddings) { -ds[it] }.map {
-                Result(mediaIds[it.id], it.score, it.semanticOnly, it.similarity)
-            }
+            HybridSearch.search(q, index, fields, queryVector, embeddings) { -ds[it] }
+                // thumbsup2 lists its 200 nearest by meaning however weak; a gallery would then
+                // "match" everything. Drop the meaning-only ones that are unrelated (unchanged order).
+                .filter { !it.semanticOnly || (it.similarity ?: 0f) >= MIN_SIMILARITY }
+                .map { Result(mediaIds[it.id], it.score, it.semanticOnly, it.similarity) }
         }
     }
 
@@ -91,6 +102,14 @@ class SearchService(
                 null
             }
         }
+    }
+
+    companion object {
+        /**
+         * Cosine similarity a result found by meaning alone must reach. With MiniLM, captions
+         * related to a query score about 0.3-0.6 and unrelated ones about 0.1.
+         */
+        const val MIN_SIMILARITY = 0.2f
     }
 
     /** Frees the query embedder (about 90 MB). */

@@ -192,6 +192,7 @@ private fun ViewerChrome(
 ) {
     val context = LocalContext.current
     val description by remember(item.aiKey) { vm.description(item) }.collectAsState(null)
+    val ai by vm.aiStatus.collectAsState()
     Box(Modifier.fillMaxSize()) {
         Row(
             Modifier
@@ -220,7 +221,12 @@ private fun ViewerChrome(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Edit in…") }, onClick = { menu = false; onEdit() })
                     DropdownMenuItem(text = { Text("Open with…") }, onClick = { menu = false; onOpenWith() })
-                    DropdownMenuItem(text = { Text("Describe again") }, onClick = { menu = false; vm.redescribe(item) })
+                    if (ai.ready) {
+                        DropdownMenuItem(
+                            text = { Text(if (description == null) "Describe now" else "Describe again") },
+                            onClick = { menu = false; vm.redescribe(item) },
+                        )
+                    }
                 }
             }
         }
@@ -282,6 +288,7 @@ private fun VideoPage(item: MediaEntity, current: Boolean, onTap: () -> Unit) {
 private fun DetailsSheet(item: MediaEntity, hit: SearchService.Result?, vm: GalleryViewModel) {
     val context = LocalContext.current
     val d by remember(item.aiKey) { vm.description(item) }.collectAsState(null)
+    val ai by vm.aiStatus.collectAsState()
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp)) {
         SelectionContainer {
             Column {
@@ -311,8 +318,10 @@ private fun DetailsSheet(item: MediaEntity, hit: SearchService.Result?, vm: Gall
                 }
             }
         }
-        Row {
-            TextButton(onClick = { vm.redescribe(item) }) { Text("Describe again") }
+        if (ai.ready) {
+            Row {
+                TextButton(onClick = { vm.redescribe(item) }) { Text(if (d == null) "Describe now" else "Describe again") }
+            }
         }
         Spacer(Modifier.height(24.dp))
     }

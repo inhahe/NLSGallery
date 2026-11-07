@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.lithic.gallery.data.LayoutMode
 import com.lithic.gallery.data.Settings
+import com.lithic.gallery.data.TextDetail
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,8 +102,13 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
                 set { it.copy(describeVideos = v) }
             }
             Text("Text reading detail", Modifier.padding(start = 16.dp, top = 12.dp))
-            for ((canvas, label) in listOf(2560 to "Full (as thumbsup2; slowest)", 1920 to "High", 1280 to "Fast (misses small text)")) {
-                Choice(label, null, s.ocrCanvas == canvas) { set { it.copy(ocrCanvas = canvas) } }
+            for ((detail, label, about) in listOf(
+                Triple(TextDetail.BALANCED, "Balanced", "Full detail for screenshots, downloads and messages; " +
+                    "camera photos and videos at half (each photo about 10 s instead of a minute)"),
+                Triple(TextDetail.FULL, "Full", "Everything at thumbsup2's detail (about a minute per camera photo)"),
+                Triple(TextDetail.FAST, "Fast", "Everything at half detail (misses small text in screenshots)"),
+            )) {
+                Choice(label, about, s.textDetail == detail) { set { it.copy(textDetail = detail) } }
             }
             SliderRow("Processor threads", if (s.aiThreads == 0) "automatic" else "${s.aiThreads}",
                 s.aiThreads.toFloat(), 0f..8f, steps = 7) { v -> set { it.copy(aiThreads = v.roundToInt()) } }

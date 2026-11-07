@@ -17,6 +17,21 @@ if /i "%~1"=="debug" set "PKG=com.lithic.gallery.debug"
 set "DEST=/sdcard/Android/data/%PKG%/files/models"
 
 cd /d "%~dp0"
+rem The app must create its folder itself: one adb creates belongs to the shell user, and the
+rem app could not read what is copied into it. Opening the app makes it.
+"%ADB%" -d shell am start -n %PKG%/com.lithic.gallery.MainActivity >nul
+set /a TRIES=0
+:waitdir
+"%ADB%" -d shell "[ -d %DEST% ]"
+if not errorlevel 1 goto havedir
+set /a TRIES+=1
+if %TRIES% geq 30 (
+    echo The app did not create %DEST%: is it installed?
+    exit /b 1
+)
+timeout /t 1 /nobreak >nul
+goto waitdir
+:havedir
 if not exist "tools\weights\blip\model.safetensors" (
     echo tools\weights is empty: run "python tools\fetch_weights.py" first.
     exit /b 1

@@ -33,6 +33,8 @@ object Work {
     const val KEY_USER = "user"
     const val KEY_DONE = "done"
     const val KEY_TOTAL = "total"
+    /** Which pass a describe run is in: "captions", then "text". */
+    const val KEY_PHASE = "phase"
     const val KEY_KEYS = "keys"
     const val KEY_ERROR = "error"
 
@@ -107,12 +109,13 @@ object Work {
             NotificationManager.IMPORTANCE_LOW))
     }
 
-    internal fun describeNotification(context: Context, id: java.util.UUID, done: Int, total: Int): ForegroundInfo {
+    /** @param phase "captions" or "text": which pass the run is in. */
+    internal fun describeNotification(context: Context, id: java.util.UUID, done: Int, total: Int, phase: String = "captions"): ForegroundInfo {
         val cancel = WorkManager.getInstance(context).createCancelPendingIntent(id)
         val n = NotificationCompat.Builder(context, CHANNEL_AI)
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setContentTitle("Describing photos for search")
-            .setContentText("$done of $total")
+            .setContentText("$done of $total" + if (phase == "text") " (reading text in pictures)" else " (captions)")
             .setProgress(total, done, false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -140,40 +143,55 @@ object Work {
 }
 
 /**
- * Describes, newest first, every file that lacks a description (or a part of one now switched
- * on), saving each as it finishes, so stopping loses at most the file in progress.
+ * Describes every file that lacks a description (or a part of one now switched on), in two
+ * passes: captions first, newest first (about 2 s each, so the whole library becomes searchable
+ * soon), then the text in pictures (10-60 s each), likeliest to hold text first. Each file is
+ * saved as it finishes, so stopping loses at most the one in progress.
  */
 class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as GalleryApp
         val s = app.settings.current()
+        app.models.verifyCopied()
         if (!app.ai.ready(s)) return Result.success()
         app.repository.sync()
-        val todo = app.db.ai().undescribed(s.describeVideos, s.captions, s.ocr)
-        if (todo.isEmpty()) return Result.success()
+        val dao = app.db.ai()
+        val captionPass = if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false) else emptyList()
+        val textPass = if (s.ocr) dao.withoutText(s.describeVideos) else emptyList()
+        val total = captionPass.size + textPass.size
+        if (total == 0) return Result.success()
         val user = inputData.getBoolean(Work.KEY_USER, false)
         // A notification for any run worth watching. From the background Android may refuse a
         // foreground service; then this runs as an ordinary job (limited to ten minutes, and
         // resumed by the next trigger).
         var foreground = false
-        if (user || todo.size > 3) {
+        if (user || total > 3) {
             foreground = try {
-                setForeground(Work.describeNotification(applicationContext, id, 0, todo.size)); true
+                setForeground(Work.describeNotification(applicationContext, id, 0, total)); true
             } catch (e: IllegalStateException) {
                 Log.i(TAG, "not in the foreground: ${e.message}"); false
             }
         }
+        var done = 0
+        suspend fun step(item: com.lithic.gallery.data.MediaEntity, captions: Boolean, ocr: Boolean) {
+            app.ai.describe(item, s, captions = captions, ocr = ocr)
+            done++
+            setProgress(workDataOf(Work.KEY_DONE to done, Work.KEY_TOTAL to total,
+                Work.KEY_PHASE to if (ocr) "text" else "captions"))
+            if (foreground) setForeground(Work.describeNotification(applicationContext, id, done, total, if (ocr) "text" else "captions"))
+        }
         try {
-            for ((i, item) in todo.withIndex()) {
-                if (isStopped) break
-                app.ai.describe(item, s)
-                setProgress(workDataOf(Work.KEY_DONE to i + 1, Work.KEY_TOTAL to todo.size))
-                if (foreground) setForeground(Work.describeNotification(applicationContext, id, i + 1, todo.size))
-                if ((i + 1) % 25 == 0) app.search.refresh()
+            for (item in captionPass) {
+                if (isStopped) return Result.success()
+                step(item, captions = true, ocr = false)
+            }
+            for (item in textPass) {
+                if (isStopped) return Result.success()
+                step(item, captions = false, ocr = true)
             }
         } finally {
             app.ai.release()
-            app.search.refresh()
+            app.search.invalidate()
         }
         return Result.success()
     }
@@ -190,6 +208,7 @@ class NewMediaWorker(context: Context, params: WorkerParameters) : CoroutineWork
         val app = applicationContext as GalleryApp
         val s = app.settings.current()
         val r = app.repository.sync()
+        app.models.verifyCopied()
         if (s.describeNewMedia && (r.added > 0 || r.changed > 0) && app.ai.ready(s)) {
             Work.describe(applicationContext, userInitiated = false, s)
         }

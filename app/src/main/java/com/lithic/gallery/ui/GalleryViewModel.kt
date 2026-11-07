@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -44,6 +43,8 @@ data class AiStatus(
     val running: Boolean = false,
     val done: Int = 0,
     val total: Int = 0,
+    /** The pass a run is in: "captions" (all files first), then "text". */
+    val phase: String = "captions",
     /** A model download is going: bytes done of total. */
     val downloading: Boolean = false,
     val downloadDone: Long = 0,
@@ -83,7 +84,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     val query = MutableStateFlow("")
 
-    /** Bumps when the search index has been rebuilt, so open results are recomputed. */
+    /** Bumps when files or descriptions change, so open results are recomputed. */
     private val indexVersion = MutableStateFlow(0)
 
     /** Results for [query] (null when not searching), best first. */
@@ -122,6 +123,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             running = run != null,
             done = run?.progress?.getInt(Work.KEY_DONE, 0) ?: 0,
             total = run?.progress?.getInt(Work.KEY_TOTAL, 0) ?: 0,
+            phase = run?.progress?.getString(Work.KEY_PHASE) ?: "captions",
             downloading = dl != null,
             downloadDone = dl?.progress?.getLong(Work.KEY_DONE, 0) ?: 0,
             downloadTotal = dl?.progress?.getLong(Work.KEY_TOTAL, 0) ?: 0,
@@ -172,18 +174,33 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             app.repository.changes().debounce(1000).collect { app.repository.sync() }
         }
-        // Rebuild the search index when files or descriptions change.
+        // Files or descriptions changed: the index is rebuilt by the next search (an open one
+        // is rerun, at most every few seconds while photos are being described).
         viewModelScope.launch {
             merge(allMedia.map { it.size.toLong() }, app.db.ai().observeVersion())
-                .debounce(1500)
-                .collect {
-                    app.search.refresh()
-                    indexVersion.value++
-                }
+                .collect { app.search.invalidate() }
+        }
+        viewModelScope.launch {
+            merge(allMedia.map { it.size.toLong() }, app.db.ai().observeVersion())
+                .debounce(5000)
+                .collect { if (query.value.isNotBlank()) indexVersion.value++ }
         }
         // Keep the media trigger in step with its setting.
         viewModelScope.launch {
             settings.map { it.describeNewMedia }.distinctUntilChanged().collect { Work.watchNewMedia(app, it) }
+        }
+    }
+
+    /**
+     * The app came to the foreground: notice models copied in meanwhile, and describe what is
+     * waiting, as on opening.
+     */
+    fun onResume() {
+        if (!started) return
+        viewModelScope.launch {
+            app.models.verifyCopied()
+            val s = app.settings.current()
+            if (s.describeOnOpen && app.ai.ready(s)) Work.describe(app, userInitiated = false, s)
         }
     }
 
@@ -243,5 +260,4 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun storageUsedByModels(): Long = app.models.bytesOnDisk()
 
-    suspend fun currentSettings(): Settings = settings.first()
 }

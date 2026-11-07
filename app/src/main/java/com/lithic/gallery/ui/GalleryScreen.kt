@@ -450,7 +450,10 @@ private fun AiDialog(
             Column {
                 when {
                     ai.running -> Text(
-                        if (ai.total > 0) "Describing: ${ai.done} of ${ai.total} done. It carries on in the background; the notification shows progress."
+                        if (ai.total > 0) "Describing: ${ai.done} of ${ai.total} done " +
+                            (if (ai.phase == "text") "(now reading the text in pictures, the slower part). "
+                            else "(captions first, so everything is searchable soon; then the text in pictures). ") +
+                            "It carries on in the background; the notification shows progress."
                         else "Starting…",
                     )
                     ai.undescribed > 0 -> Text(

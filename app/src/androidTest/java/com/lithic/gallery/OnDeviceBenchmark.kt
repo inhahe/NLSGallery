@@ -47,8 +47,8 @@ class OnDeviceBenchmark {
     fun craftAndBlipSpeed() {
         assumeTrue("weights not on the phone", File(models.store.weightsDir(ModelManager.CRAFT), "craft_mlt_25k.pth").exists())
         val configs: List<Pair<String, (OrtSession.SessionOptions) -> Unit>> = listOf(
-            "nnapi fp16" to { so -> so.addNnapi(java.util.EnumSet.of(ai.onnxruntime.providers.NNAPIFlags.USE_FP16)) },
-            "nnapi fp32" to { so -> so.addNnapi() },
+            // NNAPI (GPU/NPU) is not here: on the S22 (Snapdragon 8 Gen 1, Android 16) its driver
+            // fails CRAFT with ANEURALNETWORKS_OP_FAILED, in fp16 and fp32 alike.
             "default threads" to { _ -> },
             "4 threads" to { so -> so.setIntraOpNumThreads(4) },
             "xnnpack 4" to { so -> so.setIntraOpNumThreads(1); so.addXnnpack(mapOf("intra_op_num_threads" to "4")) },
@@ -56,14 +56,14 @@ class OnDeviceBenchmark {
         for ((label, cfg) in configs) {
             try {
                 // A session per input size, its shape fixed (NNAPI compiles only static shapes).
-                for ((h, w) in listOf(1920 to 2560, 960 to 1280, 2368 to 1088)) {
+                for ((h, w) in listOf(960 to 1280, 1440 to 1920, 2368 to 1088, 1920 to 2560)) {
                     session(ModelManager.CRAFT, "craft.onnx") { so ->
                         so.setSymbolicDimensionValue("h", h.toLong())
                         so.setSymbolicDimensionValue("w", w.toLong())
                         cfg(so)
                     }.use { s ->
                         val ms = time(s, "image", longArrayOf(1, 3, h.toLong(), w.toLong()), 2)
-                        Log.i(TAG, "craft $label ${w}x$h: $ms ms")
+                        Log.i(TAG, "craft $label ${w}x$h: $ms ms, peak memory ${peakMb()} MB")
                     }
                 }
                 session(ModelManager.BLIP, "blip_vision.onnx", cfg).use { s ->
@@ -74,6 +74,11 @@ class OnDeviceBenchmark {
             }
         }
     }
+
+    /** The process's peak resident memory so far (VmHWM), in MB. */
+    private fun peakMb(): Long = File("/proc/self/status").readLines()
+        .firstOrNull { it.startsWith("VmHWM:") }?.split(' ', '\t')?.filter { it.isNotEmpty() }
+        ?.getOrNull(1)?.toLongOrNull()?.div(1024) ?: -1
 
     private companion object { const val TAG = "OnDeviceBenchmark" }
 }

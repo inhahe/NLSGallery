@@ -40,6 +40,23 @@ Deliberate differences from thumbsup2:
 - **Videos are described**: BLIP captions frames at 10%, 50% and 90% (distinct captions joined
   with "; "), EasyOCR reads the middle frame. thumbsup2 describes images only.
 - **Photos over ~16.8 MP are decoded subsampled** (by powers of two) to bound memory.
+- **Text detail** (`TextDetail`): EasyOCR's detector works at up to 2560 px (its default, so
+  thumbsup2's). On the phone (Snapdragon 8 Gen 1) CRAFT takes 8.5 s at 1280×960, 22 s at
+  1920×1440 and 52 s at 2560×1920, so the default "Balanced" keeps 2560 for screenshots,
+  downloads, messages and other pictures (all within it at their own size anyway) and uses 1280
+  for camera photos and videos. "Full" is thumbsup2 throughout; "Fast" is 1280 throughout.
+- **Tiled text detection** (an implementation detail, not a difference): CRAFT's activations
+  take ~1.3 KB per input pixel (6.2 GB at 2560×1920, which got the process killed). An input
+  above `maxTilePixels` (2.7 MP on phones with 7 GB+, 1.2 MP below) is cut into tiles, each a
+  core plus a 256 px margin of context on every side that is not the image's edge; each output
+  pixel comes from the tile whose core holds it. `EasyOcr.tilePlan` picks, among layouts of up
+  to 16×16 tiles that fit the budget, the one computing the fewest pixels (a 2560×1920 canvas:
+  3 strips, 1.4× the work). `CraftTilingTest`: with a 256 px margin the score maps are
+  identical to running whole (difference 0.0) on all 42 test images cut once or twice, so the
+  text is too; with 192 px two images read differently, with 128 px three.
+- **Meaning-only results need cosine similarity ≥ 0.2** (`SearchService.MIN_SIMILARITY`).
+  thumbsup2 always lists its 200 nearest embeddings, so every query would "match" a whole small
+  library; MiniLM scores related captions 0.3-0.6, unrelated ones ~0.1. Order is unchanged.
 - **A part switched on later is filled in**: a description stores caption and OCR separately
   (null = not made), so turning OCR on later reads text in already-captioned photos. thumbsup2
   keeps whatever its first run made.
@@ -79,7 +96,8 @@ ships in assets.
   name: screenshots, messaging apps, downloads, camera, other) and an `aiKey` =
   sha1(name, size, mtime), so moved files keep their descriptions (thumbsup2 keys its cache the
   same way).
-- Room (`Database.kt`): `media` (the library copy), `ai_descriptions` (keyed by `aiKey`;
+- Room (`Database.kt`, version 2; migrations kept, schemas in `app/schemas`): `media` (the
+  library copy), `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`;
   caption/ocr nullable per part; `error` marks a file that could not be read, not retried until
   it changes), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded).
 - `MediaRepository.sync()` diffs MediaStore against the table (upsert changed, delete gone);
@@ -98,7 +116,10 @@ folder tabs" is off.
 the summed squared relative difference of row heights from the target; every row but the last
 fills the width exactly at its images' own aspect ratios, so nothing is cropped or letterboxed.
 The last row keeps the target height, left-aligned. A row that would exceed 2.5× the target is
-capped and centred. `Layouts.grid`: N square cells per row, images fitted inside. Pinch changes
+capped and centred. `Layouts.grid`: N square cells per row, images fitted inside. MediaStore
+reports a video's stored size, wrong for non-square pixels; when a decoded thumbnail's aspect
+differs from the cell's by over 4% it is recorded (`display_aspect`, per id and modification
+time) and the layout uses it. Pinch changes
 row height or column count. Thumbnails are MediaStore's own (`ContentResolver.loadThumbnail`,
 upright, video frames included) through a Coil fetcher (`MediaThumbFetcher`), requested in
 size buckets so the memory cache is shared across zoom levels. The header (search field, AI
@@ -118,14 +139,19 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 - `ModelManager`: models.json from assets; weights in `Android/data/<app>/files/models/<key>/`
   (removed with the app; reachable over USB, so `push-models.bat` can install them); resumable
   HTTP download (Range), zip member extraction, SHA-256 check, `.verified` marker; files copied
-  in without a marker are hashed at the next start (`verifyCopied`).
-- `AiEngine`: opens the sessions for the current settings, describes one file at a time
-  (serialized), saves description then embedding, `release()` closes the models (~1.5 GB).
+  in without a marker are hashed by `verifyCopied` (app start and resume, and each worker run).
+  The app creates its `models` folder itself: a folder adb creates there belongs to the shell
+  user and the app cannot read what is copied into it, so the copy scripts open the app first.
+- `AiEngine`: opens only the sessions a pass needs (BLIP + MiniLM for captions; CRAFT,
+  recognizer + MiniLM for text), describes one file at a time (serialized), saves description
+  then embedding (re-embedded when OCR text arrives: the embedding records a hash of its text),
+  `release()` closes the models.
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, subsampled above
   16.8 MP) to `RgbImage` in strips; video frames by `MediaMetadataRetriever.getScaledFrameAtTime`.
-- `SearchService`: rebuilds a `MiniSearch` over all files (fields as thumbsup2's) plus the
-  embeddings from the database whenever files or descriptions change (debounced); queries are
-  embedded with a MiniLM session kept for search; ties break newest first.
+- `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's) plus the embeddings,
+  rebuilt from the database by the first search after files or descriptions change (not at each
+  change: describing changes them every couple of seconds; an open search reruns at most every
+  5 s); queries are embedded with a MiniLM session kept for search; ties break newest first.
 
 ### Background work (`work/Workers.kt`)
 
@@ -135,7 +161,10 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 | `NewMediaWorker` (unique "media-trigger") | MediaStore content-URI trigger (images + video, 5 s update delay, 1 min max), re-armed after each run; armed while "Describe new photos as they arrive" is on | none |
 | `ModelDownloadWorker` (unique "download-models") | Models screen | network (unmetered if "Only over Wi-Fi") |
 
-Describing runs newest first and saves per file, so stopping loses at most one. With more than
+Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s
+each, so the whole library is soon searchable; then the text in pictures, 10-60 s each, ordered
+screenshots, downloads, messages, other, camera (`AiDao.withoutText`). It saves per file, so
+stopping loses at most one. With more than
 three files (or user-started) it asks to run in the foreground with a progress notification and
 a Stop action (`mediaProcessing` on Android 15+, `dataSync` before); Android may refuse that from
 the background, and then it runs as a normal job (10-minute limit, resumed by the next trigger).

@@ -16,6 +16,29 @@ import kotlinx.coroutines.flow.map
 
 enum class LayoutMode { JUSTIFIED, GRID }
 
+/**
+ * How large an image EasyOCR's detector reads text at. thumbsup2 (EasyOCR's default) works at up
+ * to 2560 pixels on the longer side; on a phone that takes about a minute for a 12-megapixel
+ * photo, so camera photos default to 1280.
+ */
+enum class TextDetail {
+    /** 2560 for everything, as thumbsup2. */
+    FULL,
+    /** 2560 for screenshots, downloads, messages and other pictures; 1280 for camera photos and videos. */
+    BALANCED,
+    /** 1280 for everything. */
+    FAST;
+
+    /** The detector's canvas for a file in [folder]. */
+    fun canvasFor(folder: Folder, isVideo: Boolean): Int = when (this) {
+        FULL -> EasyOcr.DEFAULT_CANVAS
+        FAST -> REDUCED
+        BALANCED -> if (isVideo || folder == Folder.CAMERA) REDUCED else EasyOcr.DEFAULT_CANVAS
+    }
+
+    companion object { const val REDUCED = 1280 }
+}
+
 /** Every user preference, with its default. */
 data class Settings(
     // Thumbnails
@@ -43,8 +66,7 @@ data class Settings(
     val captions: Boolean = true,
     val ocr: Boolean = true,
     val describeVideos: Boolean = true,
-    /** EasyOCR's canvas (longest side the detector works at); thumbsup2 uses 2560. */
-    val ocrCanvas: Int = EasyOcr.DEFAULT_CANVAS,
+    val textDetail: TextDetail = TextDetail.BALANCED,
     /** ONNX Runtime threads, 0 for its own choice. */
     val aiThreads: Int = 0,
 
@@ -77,7 +99,7 @@ class SettingsStore(private val context: Context) {
             p[CAPTIONS] = s.captions
             p[OCR] = s.ocr
             p[DESCRIBE_VIDEOS] = s.describeVideos
-            p[OCR_CANVAS] = s.ocrCanvas
+            p[TEXT_DETAIL] = s.textDetail.name
             p[THREADS] = s.aiThreads
             p[SEARCH_FIELDS] = s.searchFields.joinToString(",")
             p[SEARCH_TAB_ONLY] = s.searchCurrentTabOnly
@@ -101,7 +123,7 @@ class SettingsStore(private val context: Context) {
             captions = p[CAPTIONS] ?: d.captions,
             ocr = p[OCR] ?: d.ocr,
             describeVideos = p[DESCRIBE_VIDEOS] ?: d.describeVideos,
-            ocrCanvas = p[OCR_CANVAS] ?: d.ocrCanvas,
+            textDetail = p[TEXT_DETAIL]?.let { runCatching { TextDetail.valueOf(it) }.getOrNull() } ?: d.textDetail,
             aiThreads = p[THREADS] ?: d.aiThreads,
             searchFields = p[SEARCH_FIELDS]?.split(',')?.filter { it in HybridSearch.FIELDS }?.toSet() ?: d.searchFields,
             searchCurrentTabOnly = p[SEARCH_TAB_ONLY] ?: d.searchCurrentTabOnly,
@@ -124,7 +146,7 @@ class SettingsStore(private val context: Context) {
         val CAPTIONS = booleanPreferencesKey("captions")
         val OCR = booleanPreferencesKey("ocr")
         val DESCRIBE_VIDEOS = booleanPreferencesKey("describe_videos")
-        val OCR_CANVAS = intPreferencesKey("ocr_canvas")
+        val TEXT_DETAIL = stringPreferencesKey("text_detail")
         val THREADS = intPreferencesKey("ai_threads")
         val SEARCH_FIELDS = stringPreferencesKey("search_fields")
         val SEARCH_TAB_ONLY = booleanPreferencesKey("search_current_tab_only")
