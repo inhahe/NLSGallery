@@ -12,7 +12,10 @@ import kotlin.math.min
  * query ranks the same documents the same way.
  *
  * Unlike MiniSearch, [remove] takes a document's postings out at once (MiniSearch leaves them
- * until a vacuum), so the statistics are always those of a freshly built index.
+ * until a vacuum), and a field's average length is the exact mean of the documents in the index
+ * (MiniSearch keeps a running average, whose last bits depend on the order documents came in;
+ * scores agree with it to about 1e-15). So the scores depend on which documents are in the
+ * index, never on the order they were added or removed in.
  *
  * Not thread-safe: build or change it on one thread at a time.
  */
@@ -25,7 +28,8 @@ class MiniSearch(val fields: List<String>) {
     private val fieldLength = HashMap<Int, IntArray>()
     /** document → the terms it was indexed under, to take it out again */
     private val docTerms = HashMap<Int, Array<Set<String>>>()
-    private val avgFieldLength = DoubleArray(fields.size)
+    /** Per field, the summed lengths of the documents in the index. */
+    private val totalFieldLength = LongArray(fields.size)
     private var documentCount = 0
 
     /**
@@ -42,9 +46,7 @@ class MiniSearch(val fields: List<String>) {
         for ((f, value) in values.withIndex()) {
             val tokens = tokenize(value)
             lengths[f] = tokens.toSet().size
-            // MiniSearch's running average: (avg * count + length) / (count + 1), count = docs before this one
-            val count = documentCount - 1
-            avgFieldLength[f] = (avgFieldLength[f] * count + lengths[f]) / (count + 1)
+            totalFieldLength[f] += lengths[f]
             val seen = LinkedHashSet<String>()
             for (token in tokens) {
                 val term = processTerm(token)
@@ -63,11 +65,7 @@ class MiniSearch(val fields: List<String>) {
     fun remove(id: Int) {
         val lengths = fieldLength.remove(id) ?: return
         val terms = docTerms.remove(id)!!
-        // MiniSearch's removeFieldLength: (avg * count - length) / (count - 1)
-        for (f in fields.indices) {
-            avgFieldLength[f] = if (documentCount > 1)
-                (avgFieldLength[f] * documentCount - lengths[f]) / (documentCount - 1) else 0.0
-        }
+        for (f in fields.indices) totalFieldLength[f] -= lengths[f]
         documentCount--
         for (f in fields.indices) for (term in terms[f]) {
             val perField = index[term] ?: continue
@@ -152,7 +150,7 @@ class MiniSearch(val fields: List<String>) {
             val matching = docs.size
             for ((doc, freq) in docs) {
                 val len = fieldLength[doc]!![f]
-                val score = weight * bm25(freq, matching, documentCount, len, avgFieldLength[f])
+                val score = weight * bm25(freq, matching, documentCount, len, totalFieldLength[f].toDouble() / documentCount)
                 val r = results[doc]
                 if (r != null) {
                     r.score += score

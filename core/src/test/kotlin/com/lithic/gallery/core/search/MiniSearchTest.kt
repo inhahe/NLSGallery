@@ -62,4 +62,24 @@ class MiniSearchTest {
             for ((x, y) in a.zip(b)) assertWithMessage("'$q' ${x.id}").that(x.score).isWithin(1e-9).of(y.score)
         }
     }
+
+    @Test
+    fun scoresDoNotDependOnTheOrderDocumentsCameIn() {
+        val docs = ref["docs"]!!.jsonArray.map { d ->
+            val o = d.jsonObject
+            o["id"]!!.jsonPrimitive.int to fields.map { o[it]!!.jsonPrimitive.content }
+        }
+        val forward = MiniSearch(fields).apply { for ((id, v) in docs) add(id, v) }
+        // Backwards, with a third taken out and put back on the way, as a kept index sees them.
+        val churned = MiniSearch(fields).apply {
+            for ((id, v) in docs.reversed()) add(id, v)
+            for ((id, v) in docs) if (id % 3 == 1) { remove(id); add(id, v) }
+        }
+        for (q in listOf("cat", "two cats", "sleping", "IMG", "bus street", "whatsapp", "a")) {
+            val a = forward.search(q).associate { it.id to it.score }
+            val b = churned.search(q).associate { it.id to it.score }
+            // Exactly: equal scores must tie in both, for the tie-break to order them alike.
+            assertWithMessage("'$q'").that(b).isEqualTo(a)
+        }
+    }
 }
