@@ -46,13 +46,11 @@ object Crops {
         return CvOps.warpPerspective(img, m, maxWidth, maxHeight)
     }
 
-    /** `calculate_ratio`: width/height, or its inverse when below 1. */
-    private fun ratioOf(width: Int, height: Int): Double {
-        val r = width.toDouble() / height
-        return if (r < 1.0) 1.0 / r else r
-    }
-
-    /** `compute_ratio_and_resize`, whose LANCZOS flag OpenCV reads as INTER_LINEAR. */
+    /**
+     * `calculate_ratio` (width/height, or its inverse when below 1) and `compute_ratio_and_resize`,
+     * whose LANCZOS flag OpenCV reads as INTER_LINEAR. The ratio is at least 1, so EasyOCR's
+     * `new_width == 0` check never fires: there is none here.
+     */
     private fun scaleToModel(img: GrayImage): Pair<GrayImage, Double> {
         val r = img.width.toDouble() / img.height
         return if (r < 1.0) {
@@ -65,19 +63,16 @@ object Crops {
 
     /**
      * `get_image_list` for one box at a time, as EasyOCR's readtext feeds it with batch_size 1:
-     * the crop of a horizontal box ([x_min, x_max, y_min, y_max]) or null if it is too thin to read.
+     * the crop of a horizontal box ([x_min, x_max, y_min, y_max]), or null if no part of it lies
+     * inside the image.
      */
     fun horizontal(img: GrayImage, box: IntArray): Crop? {
         val xMin = max(0, box[0])
         val xMax = min(box[1], img.width)
         val yMin = max(0, box[2])
         val yMax = min(box[3], img.height)
-        val width = xMax - xMin
-        val height = yMax - yMin
-        if (width <= 0 || height <= 0) return null
-        if ((MODEL_HEIGHT * ratioOf(width, height)).toInt() == 0) return null
+        if (xMax <= xMin || yMax <= yMin) return null
         val (scaled, ratio) = scaleToModel(img.crop(xMin, yMin, xMax, yMax))
-        if (scaled.width == 0 || scaled.height == 0) return null
         val corners = doubleArrayOf(
             xMin.toDouble(), yMin.toDouble(), xMax.toDouble(), yMin.toDouble(),
             xMax.toDouble(), yMax.toDouble(), xMin.toDouble(), yMax.toDouble(),
@@ -85,12 +80,10 @@ object Crops {
         return Crop(corners, scaled, ratio)
     }
 
-    /** `get_image_list` for a rotated box (four corners, tl clockwise), or null if empty. */
-    fun free(img: GrayImage, box: DoubleArray): Crop? {
+    /** `get_image_list` for a rotated box (four corners, tl clockwise). */
+    fun free(img: GrayImage, box: DoubleArray): Crop {
         val rect = FloatArray(8) { box[it].toFloat() }
-        val straight = fourPointTransform(img, rect)
-        if ((MODEL_HEIGHT * ratioOf(straight.width, straight.height)).toInt() == 0) return null
-        val (scaled, ratio) = scaleToModel(straight)
+        val (scaled, ratio) = scaleToModel(fourPointTransform(img, rect))
         return Crop(box, scaled, ratio)
     }
 

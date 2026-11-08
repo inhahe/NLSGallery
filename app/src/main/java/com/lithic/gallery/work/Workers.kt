@@ -240,9 +240,13 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
             val s = app.settings.current()
             if (s.describeOnOpen && app.ai.ready(s)) Work.describe(applicationContext, userInitiated = false, s)
             Result.success()
-        } catch (e: IOException) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Log.w("ModelDownload", "download failed", e)
-            if (runAttemptCount < 5) Result.retry() else Result.failure(workDataOf(Work.KEY_ERROR to (e.message ?: "download failed")))
+            // The network may come back; any other failure would only repeat.
+            if (e is IOException && runAttemptCount < 5) Result.retry()
+            else Result.failure(workDataOf(Work.KEY_ERROR to (e.message ?: e.javaClass.simpleName)))
         }
     }
 

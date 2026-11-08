@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -37,6 +38,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val MODEL_INFO = mapOf(
     ModelManager.BLIP to ("Captions" to "Salesforce BLIP (base): writes a sentence about what each picture shows"),
@@ -57,6 +60,11 @@ fun ModelsScreen(vm: GalleryViewModel, onBack: () -> Unit) {
     val sizes = remember { vm.modelSizes() }
     val needed = remember(settings.captions, settings.ocr) { vm.neededModels() }
     var wifiOnly by remember { mutableStateOf(true) }
+    // A walk of the models folder: off the main thread, again when a model changes state (not at
+    // each step of a download's progress).
+    val used by produceState(0L, states.mapValues { it.value::class }) {
+        value = withContext(Dispatchers.IO) { vm.storageUsedByModels() }
+    }
     Scaffold(topBar = {
         TopAppBar(
             title = { Text("AI models") },
@@ -102,7 +110,8 @@ fun ModelsScreen(vm: GalleryViewModel, onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(16.dp))
-            val missing = needed.filter { states[it] != ModelState.Ready }
+            // A file being checked (copied in over USB) is not offered for download meanwhile.
+            val missing = needed.filter { states[it] != ModelState.Ready && states[it] != ModelState.Verifying }
             if (ai.downloading) {
                 Text(
                     "Downloading ${Formatter.formatFileSize(context, ai.downloadDone)} of " +
@@ -123,12 +132,14 @@ fun ModelsScreen(vm: GalleryViewModel, onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     Text("The last download failed: $it", color = MaterialTheme.colorScheme.error)
                 }
+            } else if (needed.any { states[it] == ModelState.Verifying }) {
+                Text("Checking the copied files…", style = MaterialTheme.typography.bodyMedium)
             } else {
                 Text("Everything needed is downloaded.", style = MaterialTheme.typography.bodyMedium)
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Space used: " + Formatter.formatFileSize(context, vm.storageUsedByModels()),
+                "Space used: " + Formatter.formatFileSize(context, used),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

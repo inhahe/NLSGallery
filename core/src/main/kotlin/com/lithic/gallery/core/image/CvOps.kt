@@ -59,8 +59,12 @@ object CvOps {
 
     /**
      * `cv2.resize(src, (w, h), interpolation=INTER_LINEAR)` for [channels]-channel interleaved 8-bit
-     * data. The vertical step reproduces OpenCV's 128-bit SIMD path (VResizeLinearVec_32s8u) for the
-     * elements it covers and its scalar formula for the rest of each row, as OpenCV's x86 build does.
+     * data. The vertical step uses one formula for every element of a row, the one OpenCV's 8-bit
+     * specialization (VResizeLinear<uchar, int, short, FixedPtCast<int, uchar, 22>,
+     * VResizeLinearVec_32s8u>) computes in its SIMD body and its scalar tail alike: each term
+     * shifted down before it is multiplied, so it can come out one lower than exact rounding of
+     * `(a*b0 + c*b1 + 2^21) >> 22` would. Exact rounding for the elements past the last whole
+     * 16-byte step makes ImageOpsTest fail (68 bytes of a resize to 257×193 differ by one).
      */
     fun resizeLinear(src: ByteArray, w: Int, h: Int, channels: Int, outW: Int, outH: Int): ByteArray {
         if (outW == w && outH == h) return src.copyOf()
@@ -94,8 +98,6 @@ object CvOps {
             val b0 = ys.a0[dy]
             val b1 = ys.a1[dy]
             val o = dy * rowLen
-            // OpenCV's SIMD form (VResizeLinearVec_32s8u), which drops low bits before multiplying
-            // and so can come out one lower than exact rounding; it covers whole rows.
             for (x in 0 until rowLen) {
                 val v = ((((s0[x] shr 4) * b0) shr 16) + (((s1[x] shr 4) * b1) shr 16) + 2) shr 2
                 out[o + x] = v.coerceIn(0, 255).toByte()

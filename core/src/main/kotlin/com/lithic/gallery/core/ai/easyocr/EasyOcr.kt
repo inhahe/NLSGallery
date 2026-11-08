@@ -37,7 +37,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
             out.add(Text(crop.box, r.text, r.confidence))
         }
         for (box in groups.free) {
-            val crop = Crops.free(grey, box) ?: continue
+            val crop = Crops.free(grey, box)
             val r = recognizer.read(crop)
             out.add(Text(crop.box, r.text, r.confidence))
         }

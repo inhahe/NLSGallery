@@ -16,7 +16,13 @@ class ImageOpsTest {
     private fun load(name: String): RgbImage {
         val img = ImageIO.read(TestFiles.op("$name.png"))
         val argb = img.getRGB(0, 0, img.width, img.height, null, 0, img.width)
-        return RgbImage.fromArgb(img.width, img.height, argb)
+        val rgb = ByteArray(argb.size * 3)
+        for ((i, p) in argb.withIndex()) {
+            rgb[i * 3] = (p shr 16).toByte()
+            rgb[i * 3 + 1] = (p shr 8).toByte()
+            rgb[i * 3 + 2] = p.toByte()
+        }
+        return RgbImage(img.width, img.height, rgb)
     }
 
     /** How many bytes differ, and by at most how much. */

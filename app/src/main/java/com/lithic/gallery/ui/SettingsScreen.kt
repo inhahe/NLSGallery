@@ -83,8 +83,8 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
                     Text(
                         when {
                             ai.downloading -> "Downloading…"
-                            ai.ready -> "Downloaded"
-                            else -> "Not downloaded: tap to download"
+                            ai.modelsMissing -> "Not downloaded: tap to download"
+                            else -> "Downloaded"
                         },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

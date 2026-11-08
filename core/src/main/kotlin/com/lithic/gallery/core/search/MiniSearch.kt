@@ -28,10 +28,6 @@ class MiniSearch(val fields: List<String>) {
     private val avgFieldLength = DoubleArray(fields.size)
     private var documentCount = 0
 
-    val size: Int get() = documentCount
-
-    operator fun contains(id: Int) = id in fieldLength
-
     /**
      * Indexes document [id] with one string per field (in [fields] order; empty for none),
      * replacing it if present. Ties in score keep the order documents were added in.

@@ -21,6 +21,15 @@ class MediaDecodingTest {
     }
 
     @Test
+    fun exifTextIsUtf8ElseLatin1() {
+        assertThat(MediaDecoding.exifText("Café 東京".toByteArray() + byteArrayOf(0, 0))).isEqualTo("Café 東京")
+        // Not valid UTF-8: an old camera's Latin-1.
+        assertThat(MediaDecoding.exifText(byteArrayOf('C'.code.toByte(), 0xE9.toByte(), 0))).isEqualTo("Cé")
+        assertThat(MediaDecoding.exifText(byteArrayOf(0))).isEqualTo("")
+        assertThat(MediaDecoding.exifText(null)).isNull()
+    }
+
+    @Test
     fun xmlReferencesAreDecodedOnce() {
         assertThat(MediaDecoding.unescapeXml("&amp;lt;b&amp;gt; &lt;i&gt; &#xA9; &#10;x &quot;q&quot; &apos;")).isEqualTo("&lt;b&gt; <i> © \nx \"q\" '")
         assertThat(MediaDecoding.unescapeXml("plain & simple &unknown;")).isEqualTo("plain & simple &unknown;")

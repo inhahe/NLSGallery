@@ -29,16 +29,17 @@ data class OnnxOptions(
 class Onnx(private val store: ModelStore, private val options: OnnxOptions = OnnxOptions()) {
     val env: OrtEnvironment = OrtEnvironment.getEnvironment()
 
-    fun session(model: String, graph: String): OrtSession {
-        val so = OrtSession.SessionOptions()
-        so.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        if (options.threads > 0) so.setIntraOpNumThreads(options.threads)
-        // The graph is loaded from memory, so ONNX Runtime needs telling where its external
-        // data (the weight file the initializers point into) lives.
-        so.addConfigEntry("session.model_external_initializers_file_folder_path",
-            store.weightsDir(model).absolutePath)
-        return env.createSession(store.graph(model, graph), so)
-    }
+    fun session(model: String, graph: String): OrtSession =
+        // The session copies its options when it is made: they are freed right after.
+        OrtSession.SessionOptions().use { so ->
+            so.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            if (options.threads > 0) so.setIntraOpNumThreads(options.threads)
+            // The graph is loaded from memory, so ONNX Runtime needs telling where its external
+            // data (the weight file the initializers point into) lives.
+            so.addConfigEntry("session.model_external_initializers_file_folder_path",
+                store.weightsDir(model).absolutePath)
+            env.createSession(store.graph(model, graph), so)
+        }
 
     fun floats(data: FloatArray, vararg shape: Long): OnnxTensor =
         OnnxTensor.createTensor(env, FloatBuffer.wrap(data), shape)

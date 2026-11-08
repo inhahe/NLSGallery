@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -35,8 +36,12 @@ data class SearchHit(val item: MediaEntity, val result: SearchService.Result)
 
 /** What the AI button shows. */
 data class AiStatus(
-    /** Models for the current settings are downloaded. */
+    /** Describing can run: captions or text reading is on, and the models for them are here. */
     val ready: Boolean = false,
+    /** Captions and text reading are both switched off: nothing is described. */
+    val featuresOff: Boolean = false,
+    /** A model the current settings need is not downloaded (nor being checked). */
+    val modelsMissing: Boolean = false,
     /** Files still to describe. */
     val undescribed: Int = 0,
     val failures: Int = 0,
@@ -115,12 +120,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         workManager.getWorkInfosForUniqueWorkFlow(Work.DESCRIBE),
         workManager.getWorkInfosForUniqueWorkFlow(Work.DOWNLOAD),
         combine(app.models.state, settings) { states, s -> s to states },
-    ) { undescribed, failures, describe, download, (s, _) ->
+    ) { undescribed, failures, describe, download, (s, states) ->
         val run = describe.firstOrNull { it.state == WorkInfo.State.RUNNING }
         val dl = download.firstOrNull { !it.state.isFinished }
         val dlFailed = download.firstOrNull { it.state == WorkInfo.State.FAILED }
         AiStatus(
             ready = app.ai.ready(s),
+            featuresOff = !s.captions && !s.ocr,
+            modelsMissing = ModelManager.needed(s.captions, s.ocr).any {
+                states[it] != ModelState.Ready && states[it] != ModelState.Verifying
+            },
             undescribed = undescribed,
             failures = failures,
             running = run != null,
@@ -177,14 +186,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             app.repository.changes().debounce(1000).collect { app.repository.sync() }
         }
-        // Files or descriptions changed: the index is rebuilt by the next search (an open one
-        // is rerun, at most every few seconds while photos are being described).
+        // Files or descriptions changed: the next search updates the index first, and an open one
+        // is rerun, at most every 5 s while photos are being described.
         viewModelScope.launch {
             merge(allMedia.map { it.size.toLong() }, app.db.ai().observeVersion())
-                .collect { app.search.invalidate() }
-        }
-        viewModelScope.launch {
-            merge(allMedia.map { it.size.toLong() }, app.db.ai().observeVersion())
+                .onEach { app.search.invalidate() }
                 .sample(5000)
                 .collect { if (query.value.isNotBlank()) indexVersion.value++ }
         }
@@ -247,8 +253,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /** Forgets [item]'s description so it is described again on the next run, and starts one. */
     fun redescribe(item: MediaEntity) {
         viewModelScope.launch {
-            app.db.ai().deleteDescription(item.aiKey)
-            app.db.ai().deleteEmbeddings(item.aiKey)
+            app.db.ai().forget(item.aiKey)
             Work.describe(app, userInitiated = true, settings.value)
         }
     }

@@ -200,7 +200,7 @@ fun GalleryScreen(
                 query = query,
                 onQuery = { vm.query.value = it },
                 ai = ai,
-                onAi = { if (ai.ready) aiDialog = true else onModels() },
+                onAi = { if (ai.ready || ai.featuresOff) aiDialog = true else onModels() },
                 onSettings = onSettings,
                 onModels = onModels,
                 layoutMode = settings.layoutMode,
@@ -227,7 +227,7 @@ fun GalleryScreen(
                     category = category,
                     count = hits.size,
                 )
-            } else if (!ai.ready && !ai.downloading && all.isNotEmpty()) {
+            } else if (!ai.featuresOff && ai.modelsMissing && !ai.downloading && all.isNotEmpty()) {
                 SetupCard(onModels)
             }
         }
@@ -417,7 +417,14 @@ private fun EmptyTab(category: Category, libraryEmpty: Boolean, modifier: Modifi
 private fun NoResults(query: String, ai: AiStatus, modifier: Modifier) {
     Column(modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Nothing matches “$query”.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!ai.ready) {
+        if (ai.featuresOff) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Captions and text reading are off (Settings, AI), so only what was described before, " +
+                    "file names and folders are searched.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
+            )
+        } else if (!ai.ready) {
             Spacer(Modifier.height(8.dp))
             Text(
                 "Until the AI models are downloaded and photos described, only file names and folders are searched.",
@@ -449,6 +456,10 @@ private fun AiDialog(
         text = {
             Column {
                 when {
+                    ai.featuresOff && !ai.running -> Text(
+                        "Captions and text reading are both off (Settings, AI), so nothing is described. " +
+                            "Search still finds what was described before.",
+                    )
                     ai.running -> Text(
                         if (ai.total > 0) "Describing: ${ai.done} of ${ai.total} done " +
                             (if (ai.phase == "text") "(now reading the text in pictures, the slower part). "
@@ -470,6 +481,7 @@ private fun AiDialog(
         },
         confirmButton = {
             when {
+                ai.featuresOff && !ai.running -> TextButton(onClick = onDismiss) { Text("OK") }
                 ai.running -> TextButton(onClick = onStop) { Text("Stop") }
                 ai.undescribed > 0 -> TextButton(onClick = onDescribe) { Text("Describe now") }
                 ai.failures > 0 -> TextButton(onClick = onRetry) { Text("Retry failed") }

@@ -10,6 +10,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.Upsert
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -65,10 +66,16 @@ data class DescriptionEntity(
     val caption: String?,
     /** EasyOCR's text. */
     val ocr: String?,
-    /** The file's own caption (EXIF ImageDescription / UserComment / XMP dc:description). */
+    /**
+     * The file's own caption, "" for none: a photo's EXIF ImageDescription, else its XMP
+     * dc:description, dc:title or xmp:Label (thumbsup2's order); a video's title.
+     */
     val manualCaption: String,
     val describedAt: Long,
-    /** Why describing failed, if it did (the file is not retried until it changes). */
+    /**
+     * Why the file could not be read, if so: it is not tried again until it changes (a new key)
+     * or the failures are retried.
+     */
     val error: String?,
 )
 
@@ -149,6 +156,20 @@ interface AiDao {
     @Query("SELECT * FROM ai_embeddings WHERE model = :model")
     suspend fun embeddings(model: String): List<EmbeddingEntity>
 
+    /** The embeddings of descriptions [hashes] (at most 900 at a time: SQLite's variable limit). */
+    @Query("SELECT * FROM ai_embeddings WHERE model = :model AND hash IN (:hashes)")
+    suspend fun embeddings(model: String, hashes: List<String>): List<EmbeddingEntity>
+
+    /**
+     * A description with the embedding of its text ([e], null when it has none or the stored one
+     * is current), in one transaction: a reader sees both or neither.
+     */
+    @Transaction
+    suspend fun saveDescribed(d: DescriptionEntity, e: EmbeddingEntity?) {
+        upsertDescription(d)
+        if (e != null) upsertEmbedding(e)
+    }
+
     /**
      * Files still to describe, newest first: no description, or a part that is wanted and missing.
      * Failed files are skipped (they are retried when they change, which changes their key).
@@ -204,6 +225,13 @@ interface AiDao {
 
     @Query("DELETE FROM ai_embeddings WHERE hash = :hash")
     suspend fun deleteEmbeddings(hash: String)
+
+    /** Description [hash] and its embeddings, gone in one transaction, to be made again. */
+    @Transaction
+    suspend fun forget(hash: String) {
+        deleteDescription(hash)
+        deleteEmbeddings(hash)
+    }
 }
 
 @Database(

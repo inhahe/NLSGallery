@@ -31,7 +31,7 @@ Without thumbsup2's environment, `requirements.txt` here lists what to install f
 | `make_search_reference.mjs` | Node | `reference/search.json`: thumbsup2's MiniSearch results |
 | `export_models.py` | thumbsup2's + onnx | `app/src/main/assets/models/`: the graphs, `models.json`, `vocab.txt`; checks each against PyTorch |
 | `fetch_weights.py` | any | `weights/`: the official weight files (copied from thumbsup2's caches in WSL, or downloaded), SHA-256 checked |
-| `push-test-data.bat` | | the raw test images and references onto the phone, for the on-device test |
+| `push-test-data.bat [emulator]` | | the test images (files and PIL's pixels) and references onto the phone or the emulator, for the on-device tests |
 
 `testdata/` and `weights/` (~1.2 GB) are not in git; delete them when not testing.
 

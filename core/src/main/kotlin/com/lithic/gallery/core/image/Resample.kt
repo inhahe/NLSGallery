@@ -26,12 +26,6 @@ object Resample {
         return GrayImage(w, h, out[0])
     }
 
-    /** Pillow's bicubic resize of [src] to [w]×[h]. */
-    fun pil(src: RgbImage, w: Int, h: Int): RgbImage {
-        if (w == src.width && h == src.height) return RgbImage(w, h, src.data.copyOf())
-        return interleave(pilPlanes(planes(src), src.width, src.height, w, h), w, h)
-    }
-
     /**
      * torchvision's antialiased bicubic resize of [src] to [w]×[h], as channel planes (CHW): the
      * layout the model's input tensor is built from.
@@ -233,15 +227,5 @@ object Resample {
             p[2][i] = src.data[i * 3 + 2]
         }
         return p
-    }
-
-    internal fun interleave(p: Array<ByteArray>, w: Int, h: Int): RgbImage {
-        val out = ByteArray(w * h * 3)
-        for (i in 0 until w * h) {
-            out[i * 3] = p[0][i]
-            out[i * 3 + 1] = p[1][i]
-            out[i * 3 + 2] = p[2][i]
-        }
-        return RgbImage(w, h, out)
     }
 }

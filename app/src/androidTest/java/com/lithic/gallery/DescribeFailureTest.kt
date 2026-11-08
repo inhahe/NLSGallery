@@ -6,6 +6,7 @@ import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
+import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
 import kotlinx.coroutines.runBlocking
@@ -17,7 +18,9 @@ import org.junit.runner.RunWith
 /**
  * What describing records when a file fails: nothing when the file cannot be opened now (so a
  * later run tries again), the error when it opens but cannot be decoded (so it is not retried
- * until it changes). Needs the caption model in the app's folder (push-models.bat debug).
+ * until it changes), and a file on record as failed is left alone. Needs the caption model in
+ * the app's folder (push-models.bat debug). The test files are pending MediaStore entries in
+ * Pictures/, which every device has, so nothing is left behind.
  */
 @RunWith(AndroidJUnit4::class)
 class DescribeFailureTest {
@@ -52,6 +55,33 @@ class DescribeFailureTest {
     }
 
     @Test
+    fun aFileThatFailedIsNotTriedAgain() = runBlocking {
+        val key = "describe-failure-test-failed-${System.nanoTime()}"
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "describe-failure-test.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)!!
+        try {
+            // A readable picture whose earlier attempt is on record as failed.
+            resolver.openOutputStream(uri)!!.use { out ->
+                android.graphics.Bitmap.createBitmap(64, 48, android.graphics.Bitmap.Config.ARGB_8888)
+                    .compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+            }
+            val failed = DescriptionEntity(key, null, null, "", 1L, "out of memory")
+            dao.upsertDescription(failed)
+            app.ai.describe(item(uri, key), captionsOnly)
+            assertThat(dao.description(key)).isEqualTo(failed)
+        } finally {
+            resolver.delete(uri, null, null)
+            dao.deleteDescription(key)
+        }
+    }
+
+    @Test
     fun aFileThatCannotBeDecodedIsRecordedAsFailed() = runBlocking {
         val key = "describe-failure-test-corrupt-${System.nanoTime()}"
         val resolver = context.contentResolver
@@ -59,7 +89,7 @@ class DescribeFailureTest {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "describe-failure-test.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/GalleryTest/")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)!!

@@ -53,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -256,9 +257,10 @@ private fun ViewerChrome(
 private fun VideoPage(item: MediaEntity, current: Boolean, onTap: () -> Unit) {
     val context = LocalContext.current
     var playing by remember(item.id) { mutableStateOf(false) }
-    if (!current) playing = false
+    // Swiped away, it stops at once and shows its thumbnail when it comes back.
+    LaunchedEffect(current) { if (!current) playing = false }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        if (playing) {
+        if (playing && current) {
             val player = remember(item.id) { ExoPlayer.Builder(context).build() }
             DisposableEffect(item.id) {
                 player.setMediaItem(MediaItem.fromUri(item.contentUri))

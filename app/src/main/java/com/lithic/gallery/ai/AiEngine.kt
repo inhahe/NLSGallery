@@ -8,6 +8,7 @@ import com.lithic.gallery.core.ai.Onnx
 import com.lithic.gallery.core.ai.OnnxOptions
 import com.lithic.gallery.core.ai.embeddingText
 import com.lithic.gallery.core.ai.easyocr.EasyOcr
+import com.lithic.gallery.core.image.RgbImage
 import com.lithic.gallery.core.text.BertTokenizer
 import com.lithic.gallery.data.AiDao
 import com.lithic.gallery.data.DescriptionEntity
@@ -47,77 +48,87 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /**
      * Makes the parts of [item]'s description it lacks among those asked for ([captions], [ocr]),
-     * and saves the description and its embedding. A file that opens but cannot be decoded is
-     * saved with its error, so it is not retried until it changes; one that cannot be opened now
-     * is left as it was, for the next run. Only the models the asked-for parts need are kept open.
+     * and saves the description with the embedding of its text. Only the models the asked-for
+     * parts need are kept open.
+     *
+     * What a failure leaves depends on where it happens. Reading the file: the file is at fault,
+     * and the error is saved, so it is not tried again until it changes (a new key) or is reset;
+     * but a file that cannot be opened at all just now (deleted while waiting, card removed,
+     * access revoked) is left for the next run. Running the models (ONNX Runtime unable to
+     * allocate, say): nothing is saved and the next run tries again. Running out of Java memory
+     * anywhere is the file's size, and saved as its error.
      */
     suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr) = mutex.withLock {
         withContext(Dispatchers.Default) {
-            open(captions, ocr, s)
-            val existing = dao.description(item.aiKey)?.takeIf { it.error == null }
+            val existing = dao.description(item.aiKey)
+            if (existing?.error != null) return@withContext
             val wantCaption = captions && existing?.caption == null
             val wantOcr = ocr && existing?.ocr == null
+            if (!wantCaption && !wantOcr) return@withContext
+            open(captions, ocr, s)
             var caption = existing?.caption
             var text = existing?.ocr
             var manual = existing?.manualCaption ?: ""
+            suspend fun fail(error: String) = dao.upsertDescription(
+                DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(), error))
+
             val t0 = System.nanoTime()
-            var tDecode = 0L; var tCaption = 0L; var tOcr = 0L
-            try {
+            val frames: List<RgbImage> = try {
                 if (item.isVideo) {
-                    val frames = MediaDecoding.decodeVideoFrames(context, item.contentUri, VIDEO_FRAMES)
-                    tDecode = ms(t0)
-                    if (frames.isEmpty()) throw IllegalStateException("no frames could be read")
-                    if (wantCaption) {
-                        val t = System.nanoTime()
-                        // Each sampled frame's caption, repeats dropped: what the video shows over time.
-                        caption = frames.map { blip!!.caption(it) }.filter { it.isNotBlank() }.distinct().joinToString("; ")
-                        tCaption = ms(t)
-                    }
-                    if (wantOcr) {
-                        val t = System.nanoTime()
-                        easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, isVideo = true)
-                        text = easyOcr!!.text(frames[frames.size / 2])
-                        tOcr = ms(t)
-                    }
-                    if (existing == null) manual = MediaDecoding.videoTitle(context, item.contentUri)
+                    MediaDecoding.decodeVideoFrames(context, item.contentUri, VIDEO_FRAMES)
+                        .ifEmpty { throw IllegalStateException("no frames could be read") }
                 } else {
-                    val img = MediaDecoding.decodeImage(context.contentResolver, item.contentUri)
-                    tDecode = ms(t0)
-                    if (wantCaption) {
-                        val t = System.nanoTime()
-                        caption = blip!!.caption(img)
-                        tCaption = ms(t)
-                    }
-                    if (wantOcr) {
-                        val t = System.nanoTime()
-                        easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, isVideo = false)
-                        text = easyOcr!!.text(img)
-                        tOcr = ms(t)
-                    }
-                    if (existing == null) manual = MediaDecoding.manualCaption(context.contentResolver, item.contentUri)
+                    listOf(MediaDecoding.decodeImage(context.contentResolver, item.contentUri))
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                // Whether the file is gone or broken is not in the exception (each decoder reports
+                // failures its own way), so the file itself is asked.
                 if (!canOpen(item)) {
-                    // Gone or out of reach for now (deleted while waiting, card removed, access
-                    // revoked): nothing is recorded, so the next run tries it again, and a sync
-                    // drops it if it is gone. The exception cannot tell: a missing video and a
-                    // corrupt one both make MediaMetadataRetriever throw IllegalArgumentException.
                     Log.i(TAG, "skipped ${item.id}: it cannot be opened now")
                     return@withContext
                 }
-                Log.w(TAG, "describing ${item.uri} failed", e)
-                dao.upsertDescription(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(),
-                    error = e.message ?: e.javaClass.simpleName))
+                Log.w(TAG, "reading ${item.uri} failed", e)
+                fail(e.message ?: e.javaClass.simpleName)
+                return@withContext
+            } catch (e: OutOfMemoryError) {
+                Log.w(TAG, "reading ${item.uri} ran out of memory", e)
+                fail("out of memory")
+                return@withContext
+            }
+            if (existing == null) {
+                manual = if (item.isVideo) MediaDecoding.videoTitle(context, item.contentUri)
+                else MediaDecoding.manualCaption(context.contentResolver, item.contentUri)
+            }
+            val tDecode = ms(t0)
+
+            var tCaption = 0L
+            var tOcr = 0L
+            val embedding: EmbeddingEntity?
+            try {
+                if (wantCaption) {
+                    val t = System.nanoTime()
+                    // A video: each sampled frame's caption, repeats dropped, for what it shows over time.
+                    caption = frames.map { blip!!.caption(it) }.filter { it.isNotBlank() }.distinct().joinToString("; ")
+                    tCaption = ms(t)
+                }
+                if (wantOcr) {
+                    val t = System.nanoTime()
+                    easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, item.isVideo)
+                    text = easyOcr!!.text(frames[frames.size / 2])
+                    tOcr = ms(t)
+                }
+                embedding = embed(item.aiKey, caption ?: "", text ?: "")
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "the models failed on ${item.id}; it is left for the next run", e)
                 return@withContext
             } catch (e: OutOfMemoryError) {
                 Log.w(TAG, "describing ${item.uri} ran out of memory", e)
-                dao.upsertDescription(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(),
-                    error = "out of memory"))
+                fail("out of memory")
                 return@withContext
             }
-            dao.upsertDescription(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(), null))
-            saveEmbedding(item.aiKey, caption ?: "", text ?: "")
+            dao.saveDescribed(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(), null), embedding)
             // Timings only: what the pictures show stays out of the log.
             Log.i(TAG, "described ${item.id}: decode ${tDecode}ms caption ${tCaption}ms ocr ${tOcr}ms")
         }
@@ -130,13 +141,15 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         false
     }
 
-    /** thumbsup2's embedding of caption and text ([embeddingText]), none when both are empty. */
-    private suspend fun saveEmbedding(hash: String, caption: String, text: String) {
-        val joined = embeddingText(caption, text) ?: return
+    /**
+     * thumbsup2's embedding of caption and text ([embeddingText]) for description [key]: null when
+     * both are empty, or when the stored one is already of this text.
+     */
+    private suspend fun embed(key: String, caption: String, text: String): EmbeddingEntity? {
+        val joined = embeddingText(caption, text) ?: return null
         val textHash = sha1(joined)
-        if (dao.embedding(hash, MiniLmEmbedder.MODEL_ID)?.textHash == textHash) return
-        val v = minilm!!.embed(joined)
-        dao.upsertEmbedding(EmbeddingEntity(hash, MiniLmEmbedder.MODEL_ID, toBytes(v), textHash))
+        if (dao.embedding(key, MiniLmEmbedder.MODEL_ID)?.textHash == textHash) return null
+        return EmbeddingEntity(key, MiniLmEmbedder.MODEL_ID, toBytes(minilm!!.embed(joined)), textHash)
     }
 
     private fun open(captions: Boolean, ocr: Boolean, s: Settings) {

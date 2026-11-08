@@ -3,11 +3,16 @@ package com.lithic.gallery.ai
 import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.lithic.gallery.core.image.RgbImage
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import kotlin.math.max
 
 /** Reading photos and video frames into the pixels the models take. */
@@ -20,13 +25,17 @@ object MediaDecoding {
 
     /**
      * The photo at [uri], upright (its EXIF rotation applied, which thumbsup2 does not do: it
-     * describes a sideways photo sideways), as 8-bit RGB. Animated images give their first frame.
+     * describes a sideways photo sideways), as 8-bit RGB with the values the file stores, as
+     * PIL's convert("RGB") gives them: alpha dropped (not multiplied in), colour profile ignored
+     * (a Display P3 or Adobe RGB photo is not converted to sRGB). Animated images give their
+     * first frame.
      */
     fun decodeImage(resolver: ContentResolver, uri: Uri): RgbImage {
         val source = ImageDecoder.createSource(resolver, uri)
         val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             decoder.isMutableRequired = false
+            decoder.isUnpremultipliedRequired = true
             val px = info.size.width.toLong() * info.size.height
             var sample = 1
             while (px / (sample.toLong() * sample) > MAX_PIXELS) sample *= 2
@@ -91,13 +100,33 @@ object MediaDecoding {
      */
     fun manualCaption(resolver: ContentResolver, uri: Uri): String = try {
         resolver.openInputStream(uri)?.use { input ->
+            // The raw bytes: getAttribute reads them as ASCII, turning "Café" into "Caf??".
             val exif = ExifInterface(input)
-            exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)?.trim()?.takeIf { it.isNotEmpty() && !it.isPlaceholder() }
-                ?: exif.getAttribute(ExifInterface.TAG_XMP)?.let(::xmpCaption)
+            exifText(exif.getAttributeBytes(ExifInterface.TAG_IMAGE_DESCRIPTION))?.trim()
+                ?.takeIf { it.isNotEmpty() && !it.isPlaceholder() }
+                ?: exifText(exif.getAttributeBytes(ExifInterface.TAG_XMP))?.let(::xmpCaption)
                 ?: ""
         } ?: ""
     } catch (e: Exception) {
         ""
+    }
+
+    /**
+     * Text stored in EXIF or XMP: UTF-8, as phones write it and exiftool (thumbsup2's reader)
+     * takes it, else Latin-1; the NULs that end EXIF strings dropped. Null for null.
+     */
+    internal fun exifText(bytes: ByteArray?): String? {
+        if (bytes == null) return null
+        var n = bytes.size
+        while (n > 0 && bytes[n - 1] == 0.toByte()) n--
+        return try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes, 0, n)).toString()
+        } catch (e: CharacterCodingException) {
+            String(bytes, 0, n, Charsets.ISO_8859_1)
+        }
     }
 
     /** XML's character references, each decoded once (so "&amp;lt;" is the text "&lt;"). */
@@ -130,10 +159,23 @@ object MediaDecoding {
         return null
     }
 
-    /** The bitmap's pixels as RGB (alpha dropped, as PIL's convert("RGB") does), read in strips. */
+    /**
+     * The bitmap's stored values as RGB (alpha dropped, as PIL's convert("RGB") does), read in
+     * strips. getPixels converts to sRGB, so a bitmap in another colour space is first labelled
+     * sRGB, which changes no stored value and leaves getPixels nothing to convert.
+     */
     private fun toRgb(bitmap: Bitmap): RgbImage {
         val src = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap
         else bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        val srgb = ColorSpace.get(ColorSpace.Named.SRGB)
+        if (src.colorSpace != null && src.colorSpace != srgb) {
+            try {
+                src.setColorSpace(srgb)
+            } catch (e: IllegalArgumentException) {
+                // A space with a wider range than sRGB's (extended, linear): its values stay converted.
+                Log.w("MediaDecoding", "colour space ${src.colorSpace} kept", e)
+            }
+        }
         try {
             val w = src.width
             val h = src.height
