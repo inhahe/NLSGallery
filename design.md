@@ -196,20 +196,24 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   the models failed on is a suspect, blamed (counted, `recordModelFailure`, at most once a run;
   the third sets it aside) once the models are seen to work on that pass's input. The pass
   describing another file shows it; so does a probe (`modelsStillWork`), run when six failures
-  come with none described between or a pass ends with suspects: the same models on a real file
-  they handled before, of the same kind (photo or video, and for text the same folder, so read
-  at the same detail), or, for MiniLM, text of the most it reads. If the probe fails too, or
-  there is nothing to probe on, the models are failing just now (memory, say): the run stops,
-  blaming none, and is retried later. A count applies only while the failure is current (no
+  come with none described between or a pass ends with suspects: the same models (through the
+  same code as `describe`) on real files they handled before, up to three, newest first, passing
+  over any that cannot be read now. For captions any captioned file will do (BLIP sees every
+  picture at 384x384); for text, one read at the same detail; for MiniLM, text of the most it
+  reads. If the probe fails, the models are failing just now (memory, say): the run stops,
+  blaming none, and is retried later. If there is nothing to probe on, the pass stops undecided,
+  blaming none, and the run goes on: the suspects come last next time, and are told apart once a
+  file of their kind has been described. A count applies only while the failure is current (no
   part made, nor the description reset, since it was noted); any part made resets it. Files the
   models failed on come last in every pass, so files that always fail cannot hold one up. The
   models are closed after each failure, giving back their memory. MiniLM failing is never the
-  file's (its input is text): the description is saved without an embedding (any older one, of
-  other text, removed with it), and an embedding pass before and after the describing passes
-  (`AiDao.withoutEmbedding`, `embedMissing`) makes it; MiniLM failures are counted like the
-  others, but only stop the description being tried (after three), never set it aside. A file on
-  record as failed is skipped, so the text pass does not retry what the caption pass just failed
-  on (`DescribeFailureTest`).
+  file's and not counted (its input is text, and retrying an embedding takes milliseconds): the
+  description is saved without an embedding (any older one, of other text, removed with it),
+  and an embedding pass before and after the describing passes (`AiDao.withoutEmbedding`,
+  `embedMissing`) makes it. MiniLM failing even on its probe holds up no captions or text: the
+  run goes on and is retried later for the embeddings. A video read only for its text is decoded
+  at its middle frame alone. A file on record as failed is skipped, so the text pass does not
+  retry what the caption pass just failed on (`DescribeFailureTest`).
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.

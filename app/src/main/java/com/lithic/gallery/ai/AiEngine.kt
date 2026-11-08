@@ -113,12 +113,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
             val t0 = System.nanoTime()
             val frames: List<RgbImage> = try {
-                if (item.isVideo) {
-                    MediaDecoding.decodeVideoFrames(context, item.contentUri, VIDEO_FRAMES)
-                        .ifEmpty { throw IllegalStateException("no frames could be read") }
-                } else {
-                    listOf(MediaDecoding.decodeImage(context.contentResolver, item.contentUri))
-                }
+                frames(item, captions = wantCaption).ifEmpty { throw IllegalStateException("no frames could be read") }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Whether the file is gone or broken is not in the exception (each decoder reports
@@ -147,14 +142,12 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                 var text = existing?.ocr
                 if (wantCaption) {
                     val t = System.nanoTime()
-                    // A video: each sampled frame's caption, repeats dropped, for what it shows over time.
-                    caption = frames.map { blip!!.caption(it) }.filter { it.isNotBlank() }.distinct().joinToString("; ")
+                    caption = captionOf(frames)
                     tCaption = ms(t)
                 }
                 if (wantOcr) {
                     val t = System.nanoTime()
-                    easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, item.isVideo)
-                    text = easyOcr!!.text(frames[frames.size / 2])
+                    text = textOf(item, frames, s)
                     tOcr = ms(t)
                 }
                 caption to text
@@ -176,9 +169,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     }
 
     /**
-     * Saves [description] with the embedding of its text. MiniLM failing is never the file's
-     * fault (it reads at most 256 tokens of text): the description is saved without one (any
-     * older embedding, now of other text, removed with it) for [embedMissing] to make.
+     * Saves [description] with the embedding of its text. MiniLM failing does not hold up the
+     * description (MiniLM reads only its text): it is saved without one (any older embedding, now
+     * of other text, removed with it) for [embedMissing] to make.
      */
     private suspend fun save(description: DescriptionEntity, mediaId: Long) {
         when (val e = modelWork("the embedding of file $mediaId") { embed(description.hash, description.caption ?: "", description.ocr ?: "") }) {
@@ -205,56 +198,75 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     }
 
     /**
-     * Counts a run in which the models failed on description [key] while they worked on other
-     * input. A describing failure (one [describe] noted) counts only while it is current, and the
-     * [DescriptionEntity.MAX_MODEL_FAILURES]th sets the file aside as failed with [message]; an
-     * embedding failure ([describing] false) never sets it aside (its description is fine), but
-     * stops it being tried after as many.
+     * Counts a run in which the caption or text models failed on file [key] while they were seen
+     * to work on other input; the [DescriptionEntity.MAX_MODEL_FAILURES]th sets it aside as failed
+     * with [message]. Only while the failure [describe] noted is current. Whether it was counted.
      */
-    suspend fun recordModelFailure(key: String, message: String, describing: Boolean) = mutex.withLock {
-        dao.countModelFailure(key, message, writeTime(), DescriptionEntity.MAX_MODEL_FAILURES,
-            setAside = describing, noted = describing)
+    suspend fun recordModelFailure(key: String, message: String): Boolean = mutex.withLock {
+        dao.countModelFailure(key, message, writeTime(), DescriptionEntity.MAX_MODEL_FAILURES)
     }
 
-    /** What a pass's models are run on: captions, the text in pictures, or embeddings of text. */
-    enum class Part { CAPTIONS, TEXT, EMBEDDINGS }
+    /** A pass's models and what they make; [phase] names it in progress and notifications. */
+    enum class Part(val phase: String) { CAPTIONS("captions"), TEXT("text"), EMBEDDINGS("embeddings") }
 
     /**
      * Whether the models for [part] still work on input they handled before, like [like] (a file
-     * they just failed on): the latest file of its kind (photo or video, and for text, its folder,
-     * so read at the same detail) whose [part] they made; for embeddings, text as long as MiniLM
-     * reads. Null when there is no such file. Nothing is saved.
+     * they just failed on). Captions: a file whose caption they made (BLIP sees every picture at
+     * 384x384, so any will do). Text: one whose text they read at the same detail as [like].
+     * Embeddings: text as long as MiniLM reads. Up to [REFERENCE_TRIES] files are tried, newest
+     * first, passing over any that cannot be read now. True or false is the models' answer; null
+     * means there was nothing to try them on. Nothing is saved.
      */
     suspend fun modelsStillWork(part: Part, like: MediaEntity?, s: Settings): Boolean? = mutex.withLock {
         withContext(Dispatchers.Default) {
-            val reference = when (part) {
-                Part.CAPTIONS -> dao.captionedReference(like?.isVideo ?: false)
-                Part.TEXT -> dao.readReference(like?.folder ?: 0, like?.isVideo ?: false)
-                Part.EMBEDDINGS -> null
+            if (part == Part.EMBEDDINGS) {
+                return@withContext modelWork("the embedding probe") { open(captions = false, ocr = false, s); minilm!!.embed(PROBE_TEXT) } is Attempt.Done
             }
-            if (part != Part.EMBEDDINGS && reference == null) return@withContext null
-            val frames = if (reference == null) emptyList() else try {
-                if (reference.isVideo) MediaDecoding.decodeVideoFrames(context, reference.contentUri, VIDEO_FRAMES)
-                else listOf(MediaDecoding.decodeImage(context.contentResolver, reference.contentUri))
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                return@withContext null // the reference itself is gone or unreadable: no answer
-            } catch (e: OutOfMemoryError) {
-                return@withContext false
-            }
-            val ran = modelWork("the ${part.name.lowercase()} probe") {
-                when (part) {
-                    Part.CAPTIONS -> { open(captions = true, ocr = false, s); frames.forEach { blip!!.caption(it) } }
-                    Part.TEXT -> {
-                        open(captions = false, ocr = true, s)
-                        easyOcr!!.canvasSize = s.textDetail.canvasFor(reference!!.folderCategory, reference.isVideo)
-                        easyOcr!!.text(frames[frames.size / 2])
-                    }
-                    Part.EMBEDDINGS -> { open(captions = false, ocr = false, s); minilm!!.embed(PROBE_TEXT) }
+            val candidates = when (part) {
+                Part.CAPTIONS -> dao.captionedReferences(REFERENCE_TRIES)
+                else -> {
+                    val canvas = like?.let { s.textDetail.canvasFor(it.folderCategory, it.isVideo) }
+                    dao.readReferences(200)
+                        .filter { canvas == null || s.textDetail.canvasFor(it.folderCategory, it.isVideo) == canvas }
+                        .take(REFERENCE_TRIES)
                 }
             }
-            ran is Attempt.Done
+            for (reference in candidates) {
+                val frames = try {
+                    frames(reference, captions = part == Part.CAPTIONS)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    continue // gone or unreadable now: the next one
+                } catch (e: OutOfMemoryError) {
+                    return@withContext false // no memory even to read a picture they handled
+                }
+                if (frames.isEmpty()) continue
+                val ran = modelWork("the ${part.phase} probe") {
+                    open(captions = part == Part.CAPTIONS, ocr = part == Part.TEXT, s)
+                    if (part == Part.CAPTIONS) captionOf(frames) else textOf(reference, frames, s)
+                }
+                return@withContext ran is Attempt.Done
+            }
+            null
         }
+    }
+
+    /**
+     * The frames the models see of [item]: a photo whole; a video's frames at [VIDEO_FRAMES] for
+     * [captions], else its middle one alone (text is read from that). Empty when a video yields none.
+     */
+    private fun frames(item: MediaEntity, captions: Boolean): List<RgbImage> =
+        if (item.isVideo) MediaDecoding.decodeVideoFrames(context, item.contentUri, if (captions) VIDEO_FRAMES else listOf(VIDEO_FRAMES[1]))
+        else listOf(MediaDecoding.decodeImage(context.contentResolver, item.contentUri))
+
+    /** The caption of [frames]: a video's, each sampled frame's caption, repeats dropped. */
+    private fun captionOf(frames: List<RgbImage>): String =
+        frames.map { blip!!.caption(it) }.filter { it.isNotBlank() }.distinct().joinToString("; ")
+
+    /** The text in [item]'s middle frame (its one, for a photo), read at its detail. */
+    private fun textOf(item: MediaEntity, frames: List<RgbImage>, s: Settings): String {
+        easyOcr!!.canvasSize = s.textDetail.canvasFor(item.folderCategory, item.isVideo)
+        return easyOcr!!.text(frames[frames.size / 2])
     }
 
     /**
@@ -317,6 +329,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     companion object {
         private const val TAG = "AiEngine"
+        /** How many files a probe tries before it gives no answer. */
+        private const val REFERENCE_TRIES = 3
+
         /** Text that fills MiniLM's 256 tokens, the most it reads: as heavy as any description. */
         private val PROBE_TEXT = List(300) { "photograph" }.joinToString(" ")
 

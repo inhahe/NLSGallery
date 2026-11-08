@@ -61,10 +61,16 @@ class DescribePassTest {
     }
 
     @Test
-    fun withNothingToProbeOnNoOneIsBlamed(): Unit = runBlocking {
+    fun withNothingToProbeOnNoOneIsBlamedAndThePassStops(): Unit = runBlocking {
         val r = Run(modelsWork = null)
-        assertThat(r.pass.run(listOf("bad1"))).isEqualTo(DescribePass.End.ModelsFailing)
+        assertThat(r.pass.run(listOf("bad1"))).isEqualTo(DescribePass.End.Undecided)
         assertThat(r.blamed).isEmpty()
+        // Six failures in a row with nothing to probe on: the pass stops there.
+        val s = Run(modelsWork = null)
+        val items = (1..10).map { "bad$it" }
+        assertThat(s.pass.run(items)).isEqualTo(DescribePass.End.Undecided)
+        assertThat(s.attempted).hasSize(6)
+        assertThat(s.blamed).isEmpty()
     }
 
     @Test

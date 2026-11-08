@@ -30,6 +30,7 @@ class DescribeFailureTest {
     private val app = context.applicationContext as GalleryApp
     private val dao = app.db.ai()
     private val captionsOnly = Settings(captions = true, ocr = false)
+    private val textOnly = Settings(captions = false, ocr = true)
 
     @Before
     fun needsModels() {
@@ -132,7 +133,7 @@ class DescribeFailureTest {
             }
             // The models failed on it in an earlier run, and it was counted.
             dao.noteModelFailure(key, "", 1L)
-            app.ai.recordModelFailure(key, "boom", describing = true)
+            assertThat(app.ai.recordModelFailure(key, "boom")).isTrue()
             assertThat(dao.description(key)!!.modelFailures).isEqualTo(1)
             assertThat(app.ai.describe(item(uri, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Described)
             val d = dao.description(key)!!
@@ -147,9 +148,29 @@ class DescribeFailureTest {
 
     @Test
     fun theProbesFindTheModelsWorking() = runBlocking {
-        // The emulator's photos have captions, so there is a picture to try the caption models on.
+        assumeTrue("the text models are not on this device", app.ai.ready(textOnly))
+        // The emulator's photos have captions and text read, so there are pictures to try them on.
         assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
+        assertThat(app.ai.modelsStillWork(AiEngine.Part.TEXT, null, textOnly)).isTrue()
         assertThat(app.ai.modelsStillWork(AiEngine.Part.EMBEDDINGS, null, captionsOnly)).isTrue()
+    }
+
+    @Test
+    fun aProbePassesOverAReferenceThatCannotBeReadNow() = runBlocking {
+        // The newest captioned file is one that cannot be opened: the probe tries the next.
+        val key = "describe-failure-test-reference-${System.nanoTime()}"
+        val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            .buildUpon().appendPath("2147483001").build()
+        val media = item(gone, key).copy(id = 2147483001)
+        try {
+            app.db.media().upsert(listOf(media))
+            dao.saveDescribed(DescriptionEntity(key, "a bird", null, "", Long.MAX_VALUE / 2, null), null)
+            assertThat(dao.captionedReferences(1).single().aiKey).isEqualTo(key)
+            assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
+        } finally {
+            app.db.media().delete(listOf(media.id))
+            dao.forget(key)
+        }
     }
 
     @Test

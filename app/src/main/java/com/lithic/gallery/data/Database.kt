@@ -80,8 +80,9 @@ data class DescriptionEntity(
      */
     val error: String?,
     /**
-     * Runs in which the models failed on it while they worked for other files of the same pass,
-     * since a part of it was last made.
+     * Runs in which the caption or text models failed on it while they were seen to work on other
+     * input (another file, or a probe), since a part of it was last made. MiniLM's failures are not
+     * counted: retrying an embedding costs milliseconds.
      */
     @ColumnInfo(defaultValue = "0") val modelFailures: Int = 0,
     /**
@@ -213,39 +214,36 @@ interface AiDao {
 
     /**
      * Descriptions of files in the library with text but no [model] embedding (MiniLM failed when
-     * they were saved), but those MiniLM failed on [maxFailures] times. The text test here is a
-     * cheap first cut (SQLite trims only spaces); the caller applies the exact one.
+     * they were saved). The text test here is a cheap first cut (SQLite trims only spaces); the
+     * caller applies the exact one.
      */
     @Query(
         """SELECT d.* FROM ai_descriptions d
            LEFT JOIN ai_embeddings e ON e.hash = d.hash AND e.model = :model
-           WHERE d.error IS NULL AND e.hash IS NULL AND d.modelFailures < :maxFailures
+           WHERE d.error IS NULL AND e.hash IS NULL
              AND EXISTS (SELECT 1 FROM media m WHERE m.aiKey = d.hash)
              AND (TRIM(COALESCE(d.caption, '')) != '' OR TRIM(COALESCE(d.ocr, '')) != '')"""
     )
-    suspend fun withoutEmbedding(model: String, maxFailures: Int): List<DescriptionEntity>
+    suspend fun withoutEmbedding(model: String): List<DescriptionEntity>
 
     /**
-     * A picture (a video when [video]) whose caption the models made, the latest: what the caption
-     * models are tried on again to see whether they still work.
+     * Files whose caption the models made, photos first, the latest first: what the caption models
+     * are tried on again to see whether they still work.
      */
     @Query(
         """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
-           WHERE d.caption IS NOT NULL AND d.error IS NULL AND m.isVideo = :video
-           ORDER BY d.describedAt DESC LIMIT 1"""
+           WHERE d.caption IS NOT NULL AND d.error IS NULL
+           ORDER BY m.isVideo, d.describedAt DESC LIMIT :limit"""
     )
-    suspend fun captionedReference(video: Boolean): MediaEntity?
+    suspend fun captionedReferences(limit: Int): List<MediaEntity>
 
-    /**
-     * A picture (a video when [video]) whose text the models read, from [folder] (so read at the
-     * same detail) if there is one, the latest: what the text models are tried on again.
-     */
+    /** Files whose text the models read, photos first, the latest first: the text models' references. */
     @Query(
         """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
-           WHERE d.ocr IS NOT NULL AND d.error IS NULL AND m.isVideo = :video
-           ORDER BY m.folder = :folder DESC, d.describedAt DESC LIMIT 1"""
+           WHERE d.ocr IS NOT NULL AND d.error IS NULL
+           ORDER BY m.isVideo, d.describedAt DESC LIMIT :limit"""
     )
-    suspend fun readReference(folder: Int, video: Boolean): MediaEntity?
+    suspend fun readReferences(limit: Int): List<MediaEntity>
 
     /**
      * Embedding [e] saved only if its description is still the text [of] it was made from (not
@@ -276,18 +274,18 @@ interface AiDao {
     }
 
     /**
-     * Counts a run in which the models failed on description [hash] while they worked on other
-     * input; with [setAside], the [max]th sets it aside as failed with [message]. A describing
-     * failure ([noted]) counts only while it is current: no part made, nor the description reset,
-     * since it was noted.
+     * Counts a run in which the models failed on file [hash] while they were seen to work on other
+     * input; the [max]th sets it aside as failed with [message]. Only while the failure is current
+     * (no part made, nor the description reset, since it was noted). Whether it was counted.
      */
     @Transaction
-    suspend fun countModelFailure(hash: String, message: String, at: Long, max: Int, setAside: Boolean, noted: Boolean) {
-        val d = description(hash) ?: return
-        if (d.error != null || (noted && d.lastModelFailure == null)) return
+    suspend fun countModelFailure(hash: String, message: String, at: Long, max: Int): Boolean {
+        val d = description(hash) ?: return false
+        if (d.error != null || d.lastModelFailure == null) return false
         val n = d.modelFailures + 1
-        val error = if (setAside && n >= max) "the AI failed on it $n times: $message" else null
+        val error = if (n >= max) "the AI failed on it $n times: $message" else null
         upsertDescription(d.copy(describedAt = at, error = error, modelFailures = n))
+        return true
     }
 
     /**

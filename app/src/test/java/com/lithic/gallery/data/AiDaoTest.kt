@@ -59,12 +59,10 @@ class AiDaoTest {
         dao.saveUnembedded(DescriptionEntity("c", "  ", "", "", 4, null)) // no text
         dao.upsertDescription(DescriptionEntity("d", "a cow", null, "", 5, "unreadable")) // set aside
         dao.saveUnembedded(DescriptionEntity("gone", "a hen", null, "", 6, null)) // no file has it now
-        dao.saveUnembedded(DescriptionEntity("e", "an owl", null, "", 7, null, modelFailures = 3)) // MiniLM gave up on it
-        db.media().upsert(listOf(media(6, "e")))
 
         assertThat(dao.embedding("a", "m")).isNull()
         // Once for description "a", though two files share it.
-        assertThat(dao.withoutEmbedding("m", maxFailures = 3).map { it.hash }).containsExactly("a")
+        assertThat(dao.withoutEmbedding("m").map { it.hash }).containsExactly("a")
     }
 
     @Test
@@ -86,13 +84,15 @@ class AiDaoTest {
     }
 
     @Test
-    fun theThirdCountedDescribingFailureSetsAFileAside(): Unit = runBlocking {
+    fun theThirdCountedFailureSetsAFileAside(): Unit = runBlocking {
         dao.noteModelFailure("k", "", 1)
-        for (at in 2L..3L) dao.countModelFailure("k", "boom", at, max = 3, setAside = true, noted = true)
+        for (at in 2L..3L) assertThat(dao.countModelFailure("k", "boom", at, max = 3)).isTrue()
         assertThat(dao.description("k")!!.error).isNull()
         assertThat(dao.description("k")!!.modelFailures).isEqualTo(2)
-        dao.countModelFailure("k", "boom", 4, max = 3, setAside = true, noted = true)
+        assertThat(dao.countModelFailure("k", "boom", 4, max = 3)).isTrue()
         assertThat(dao.description("k")!!.error).isEqualTo("the AI failed on it 3 times: boom")
+        // Set aside, it is not counted again.
+        assertThat(dao.countModelFailure("k", "boom", 5, max = 3)).isFalse()
     }
 
     @Test
@@ -100,22 +100,13 @@ class AiDaoTest {
         // Noted, then a part made (by a copy of the same file, say) before it was blamed.
         dao.noteModelFailure("k", "", 1)
         dao.saveDescribed(DescriptionEntity("k", "a cat", null, "", 2, null), embedding("k"))
-        dao.countModelFailure("k", "boom", 3, max = 3, setAside = true, noted = true)
+        assertThat(dao.countModelFailure("k", "boom", 3, max = 3)).isFalse()
         assertThat(dao.description("k")!!.modelFailures).isEqualTo(0)
         // Or reset ("Describe again") before it was blamed: nothing comes back.
         dao.noteModelFailure("j", "", 1)
         dao.forget("j")
-        dao.countModelFailure("j", "boom", 3, max = 3, setAside = true, noted = true)
+        assertThat(dao.countModelFailure("j", "boom", 3, max = 3)).isFalse()
         assertThat(dao.description("j")).isNull()
-    }
-
-    @Test
-    fun embeddingFailuresNeverSetADescriptionAside(): Unit = runBlocking {
-        dao.saveUnembedded(DescriptionEntity("k", "a cat", "SALE", "", 1, null))
-        for (at in 2L..5L) dao.countModelFailure("k", "boom", at, max = 3, setAside = false, noted = false)
-        assertThat(dao.description("k")!!.error).isNull()
-        assertThat(dao.description("k")!!.caption).isEqualTo("a cat")
-        assertThat(dao.description("k")!!.modelFailures).isEqualTo(4)
     }
 
     @Test
