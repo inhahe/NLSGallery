@@ -63,8 +63,8 @@ object CvOps {
      * specialization (VResizeLinear<uchar, int, short, FixedPtCast<int, uchar, 22>,
      * VResizeLinearVec_32s8u>) computes in its SIMD body and its scalar tail alike: each term
      * shifted down before it is multiplied, so it can come out one lower than exact rounding of
-     * `(a*b0 + c*b1 + 2^21) >> 22` would. Exact rounding for the elements past the last whole
-     * 16-byte step makes ImageOpsTest fail (68 bytes of a resize to 257×193 differ by one).
+     * `(a*b0 + c*b1 + 2^21) >> 22` would. Rounding the elements past the last whole 16-byte step
+     * exactly would not match OpenCV.
      */
     fun resizeLinear(src: ByteArray, w: Int, h: Int, channels: Int, outW: Int, outH: Int): ByteArray {
         if (outW == w && outH == h) return src.copyOf()

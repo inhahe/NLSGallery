@@ -46,6 +46,21 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     fun ready(s: Settings): Boolean =
         (s.captions || s.ocr) && ModelManager.needed(s.captions, s.ocr).all(models::isReady)
 
+    /** What [describe] did with a file. */
+    sealed interface Outcome {
+        /** Its description (and embedding) saved. */
+        data object Described : Outcome
+        /** Nothing to do, on record as failed, or not to be opened just now: left as it was. */
+        data object Skipped : Outcome
+        /** It could not be read (or ran out of memory): saved as failed. */
+        data object Failed : Outcome
+        /**
+         * The models failed on it and nothing was saved: the file's fault if they work for others
+         * (see [recordModelFailure]), else theirs (memory, say).
+         */
+        data class ModelsFailed(val message: String) : Outcome
+    }
+
     /**
      * Makes the parts of [item]'s description it lacks among those asked for ([captions], [ocr]),
      * and saves the description with the embedding of its text. Only the models the asked-for
@@ -54,23 +69,27 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      * What a failure leaves depends on where it happens. Reading the file: the file is at fault,
      * and the error is saved, so it is not tried again until it changes (a new key) or is reset;
      * but a file that cannot be opened at all just now (deleted while waiting, card removed,
-     * access revoked) is left for the next run. Running the models (ONNX Runtime unable to
-     * allocate, say): nothing is saved and the next run tries again. Running out of Java memory
-     * anywhere is the file's size, and saved as its error.
+     * access revoked) is left for the next run. Running the models: nothing is saved, and the
+     * caller, which sees whether the models work for other files, decides whose fault it was.
+     * Running out of Java memory anywhere is the file's size, and saved as its error. A failure
+     * saves only the parts made before this call, which have their embedding.
      */
-    suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr) = mutex.withLock {
+    suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr): Outcome = mutex.withLock {
         withContext(Dispatchers.Default) {
             val existing = dao.description(item.aiKey)
-            if (existing?.error != null) return@withContext
+            if (existing?.error != null) return@withContext Outcome.Skipped
             val wantCaption = captions && existing?.caption == null
             val wantOcr = ocr && existing?.ocr == null
-            if (!wantCaption && !wantOcr) return@withContext
+            if (!wantCaption && !wantOcr) return@withContext Outcome.Skipped
             open(captions, ocr, s)
             var caption = existing?.caption
             var text = existing?.ocr
             var manual = existing?.manualCaption ?: ""
-            suspend fun fail(error: String) = dao.upsertDescription(
-                DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(), error))
+            suspend fun fail(error: String): Outcome {
+                dao.upsertDescription(DescriptionEntity(item.aiKey, existing?.caption, existing?.ocr, manual,
+                    writeTime(), error, existing?.modelFailures ?: 0))
+                return Outcome.Failed
+            }
 
             val t0 = System.nanoTime()
             val frames: List<RgbImage> = try {
@@ -86,20 +105,18 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                 // failures its own way), so the file itself is asked.
                 if (!canOpen(item)) {
                     Log.i(TAG, "skipped ${item.id}: it cannot be opened now")
-                    return@withContext
+                    return@withContext Outcome.Skipped
                 }
                 Log.w(TAG, "reading ${item.uri} failed", e)
-                fail(e.message ?: e.javaClass.simpleName)
-                return@withContext
+                return@withContext fail(e.message ?: e.javaClass.simpleName)
             } catch (e: OutOfMemoryError) {
                 Log.w(TAG, "reading ${item.uri} ran out of memory", e)
-                fail("out of memory")
-                return@withContext
+                return@withContext fail("out of memory")
             }
-            if (existing == null) {
-                manual = if (item.isVideo) MediaDecoding.videoTitle(context, item.contentUri)
-                else MediaDecoding.manualCaption(context.contentResolver, item.contentUri)
-            }
+            // Read at every attempt (a few milliseconds): a row saved before the file was read
+            // (a counted model failure) must not keep it unread.
+            manual = if (item.isVideo) MediaDecoding.videoTitle(context, item.contentUri)
+            else MediaDecoding.manualCaption(context.contentResolver, item.contentUri)
             val tDecode = ms(t0)
 
             var tCaption = 0L
@@ -121,18 +138,40 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                 embedding = embed(item.aiKey, caption ?: "", text ?: "")
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Log.w(TAG, "the models failed on ${item.id}; it is left for the next run", e)
-                return@withContext
+                Log.w(TAG, "the models failed on ${item.id}", e)
+                return@withContext Outcome.ModelsFailed(e.message ?: e.javaClass.simpleName)
             } catch (e: OutOfMemoryError) {
                 Log.w(TAG, "describing ${item.uri} ran out of memory", e)
-                fail("out of memory")
-                return@withContext
+                return@withContext fail("out of memory")
             }
-            dao.saveDescribed(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(), null), embedding)
+            dao.saveDescribed(DescriptionEntity(item.aiKey, caption, text, manual, writeTime(), null), embedding)
             // Timings only: what the pictures show stays out of the log.
             Log.i(TAG, "described ${item.id}: decode ${tDecode}ms caption ${tCaption}ms ocr ${tOcr}ms")
+            Outcome.Described
         }
     }
+
+    /**
+     * Counts a run in which the models failed on [item] while they worked for other files; the
+     * [DescriptionEntity.MAX_MODEL_FAILURES]th sets it aside as failed with [message].
+     */
+    suspend fun recordModelFailure(item: MediaEntity, message: String) = mutex.withLock {
+        val d = dao.description(item.aiKey)
+        if (d?.error != null) return@withLock
+        val n = (d?.modelFailures ?: 0) + 1
+        val error = if (n >= DescriptionEntity.MAX_MODEL_FAILURES) "the AI failed on it $n times: $message" else null
+        dao.upsertDescription(
+            (d ?: DescriptionEntity(item.aiKey, null, null, "", 0, null))
+                .copy(describedAt = writeTime(), error = error, modelFailures = n)
+        )
+    }
+
+    /**
+     * A description's describedAt: the time, but later than any given before, so every write
+     * changes it (the search index tells changed descriptions by it).
+     */
+    private fun writeTime(): Long = lastWrite.updateAndGet { maxOf(it + 1, System.currentTimeMillis()) }
+    private val lastWrite = java.util.concurrent.atomic.AtomicLong()
 
     /** Whether [item]'s file can be opened for reading at the moment. */
     private fun canOpen(item: MediaEntity): Boolean = try {

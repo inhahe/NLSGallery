@@ -28,7 +28,8 @@ import kotlin.math.sqrt
  * The search index kept up to date change by change gives what one built afresh from the same
  * database gives, through descriptions made and reset, files added, moved, renamed, redated and
  * deleted, failures recorded. Embeddings are a function of the text (as MiniLM's are), so equal
- * captions tie in meaning, and the query's embedding is given, so meaning is ranked too.
+ * captions tie in meaning; dates tie too (bursts, copies); and the query's embedding is given, so
+ * meaning is ranked too.
  */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [35])
@@ -43,6 +44,8 @@ class SearchServiceTest {
     private val media = HashMap<Long, MediaEntity>()
     private var nextId = 1L
     private var nextDate = 1_700_000_000_000L
+    /** describedAt as the app writes it: later at every write. */
+    private var clock = 1L
 
     private inner class Service : SearchService(db.ai(), ModelManager(context), { error("no tokenizer in this test") }) {
         override suspend fun embedQuery(text: String): FloatArray = topics[abs(text.hashCode()) % topics.size]
@@ -73,7 +76,8 @@ class SearchServiceTest {
 
     private fun newMedia(key: String? = null): MediaEntity {
         val id = nextId++
-        nextDate += 1000 + rng.nextInt(100_000)
+        // Some taken in the same second as the one before (a burst), so dates tie too.
+        if (rng.nextInt(4) != 0) nextDate += 1000 + rng.nextInt(100_000)
         val name = "IMG_$id.jpg"
         return MediaEntity(
             id = id, uri = "content://media/external/images/media/$id", isVideo = false, displayName = name,
@@ -88,7 +92,7 @@ class SearchServiceTest {
         val embedding = text?.let {
             EmbeddingEntity(key, MiniLmEmbedder.MODEL_ID, AiEngine.toBytes(vectorOf(it)), AiEngine.sha1(it))
         }
-        db.ai().saveDescribed(DescriptionEntity(key, caption, ocr, if (rng.nextInt(10) == 0) phrase(2) else "", 0, null), embedding)
+        db.ai().saveDescribed(DescriptionEntity(key, caption, ocr, if (rng.nextInt(10) == 0) phrase(2) else "", clock++, null), embedding)
     }
 
     private suspend fun add(m: MediaEntity) {
@@ -107,12 +111,12 @@ class SearchServiceTest {
             2 -> if (d != null && d.error == null && d.ocr == null) describe(m.aiKey, d.caption, if (rng.nextBoolean()) phrase(5) else "")
             3 -> db.ai().forget(m.aiKey)
             4 -> { db.media().delete(listOf(m.id)); media.remove(m.id) }
-            // A new file, sometimes a copy of an existing one (same key, so the same description).
-            5 -> add(newMedia(if (rng.nextBoolean()) m.aiKey else null))
+            // A new file, sometimes a copy of an existing one (same key and date, the same description).
+            5 -> add(if (rng.nextBoolean()) newMedia(m.aiKey).copy(sortDate = m.sortDate) else newMedia())
             6 -> add(m.copy(relativePath = folders[rng.nextInt(folders.size)]))
             7 -> add(m.copy(displayName = "renamed_${m.id}.jpg", aiKey = "renamed${m.id}"))
             8 -> { nextDate += 1000; add(m.copy(sortDate = nextDate)) }
-            9 -> if (d == null) db.ai().upsertDescription(DescriptionEntity(m.aiKey, null, null, "", 0, "unreadable"))
+            9 -> if (d == null) db.ai().upsertDescription(DescriptionEntity(m.aiKey, null, null, "", clock++, "unreadable"))
         }
     }
 

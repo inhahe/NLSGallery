@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.lithic.gallery.GalleryApp
+import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.R
 import com.lithic.gallery.data.MediaScanner
 import com.lithic.gallery.data.Settings
@@ -177,8 +178,20 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             }
         }
         var done = 0
+        val modelFailures = ModelFailureTracker<com.lithic.gallery.data.MediaEntity>()
+        suspend fun blame(files: List<Pair<com.lithic.gallery.data.MediaEntity, String>>) {
+            for ((item, message) in files) app.ai.recordModelFailure(item, message)
+        }
         suspend fun step(item: com.lithic.gallery.data.MediaEntity, captions: Boolean, ocr: Boolean) {
-            app.ai.describe(item, s, captions = captions, ocr = ocr)
+            when (val outcome = app.ai.describe(item, s, captions = captions, ocr = ocr)) {
+                AiEngine.Outcome.Described -> blame(modelFailures.described())
+                is AiEngine.Outcome.ModelsFailed -> {
+                    modelFailures.modelsFailed(item, outcome.message)
+                    // If it was memory, the next file gets what closing the models gives back.
+                    app.ai.release()
+                }
+                else -> {}
+            }
             done++
             setProgress(workDataOf(Work.KEY_DONE to done, Work.KEY_TOTAL to total,
                 Work.KEY_PHASE to if (ocr) "text" else "captions"))
@@ -188,16 +201,25 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             for (item in captionPass) {
                 if (isStopped) return Result.success()
                 step(item, captions = true, ocr = false)
+                if (modelFailures.shouldStop) return stopForModels()
             }
             for (item in textPass) {
                 if (isStopped) return Result.success()
                 step(item, captions = false, ocr = true)
+                if (modelFailures.shouldStop) return stopForModels()
             }
+            blame(modelFailures.finished())
         } finally {
             app.ai.release()
             app.search.invalidate()
         }
         return Result.success()
+    }
+
+    /** The models failed on file after file: whatever the cause, try the run again later. */
+    private fun stopForModels(): Result {
+        Log.w(TAG, "the models failed on several files in a row; describing again later")
+        return Result.retry()
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo =

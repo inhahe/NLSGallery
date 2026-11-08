@@ -2,6 +2,7 @@ package com.lithic.gallery.data
 
 import android.content.Context
 import android.net.Uri
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -73,11 +74,19 @@ data class DescriptionEntity(
     val manualCaption: String,
     val describedAt: Long,
     /**
-     * Why the file could not be read, if so: it is not tried again until it changes (a new key)
-     * or the failures are retried.
+     * Why the file could not be described, if so: it could not be read, or the models failed on
+     * it [MAX_MODEL_FAILURES] times. It is not tried again until it changes (a new key) or the
+     * failures are retried.
      */
     val error: String?,
-)
+    /** Runs in a row in which the models failed on it (not counting those that read the file wrong). */
+    @ColumnInfo(defaultValue = "0") val modelFailures: Int = 0,
+) {
+    companion object {
+        /** Model failures after which a file is set aside as failed, so it stops costing every run. */
+        const val MAX_MODEL_FAILURES = 3
+    }
+}
 
 /** A MiniLM embedding of a description's caption + OCR text, per model (thumbsup2's ai_embeddings). */
 @Entity(tableName = "ai_embeddings", primaryKeys = ["hash", "model"])
@@ -100,6 +109,20 @@ data class DisplayAspectEntity(
     val dateModified: Long,
     /** Width / height as displayed. */
     val aspect: Float,
+)
+
+/**
+ * What says whether a file's searchable text may have changed, cheaply: the fields of its own
+ * that are searched, when its description was last written, which text its embedding is of.
+ */
+data class SearchSignature(
+    val id: Long,
+    val aiKey: String,
+    val sortDate: Long,
+    val displayName: String,
+    val relativePath: String,
+    val describedAt: Long?,
+    val textHash: String?,
 )
 
 /** A media item joined to its description (null parts: not described). */
@@ -210,8 +233,34 @@ interface AiDao {
     )
     suspend fun searchable(): List<MediaWithDescription>
 
+    /** [searchable] for media [ids] (at most 900 at a time). */
+    @Query(
+        """SELECT m.id, m.displayName, m.relativePath, m.sortDate, m.isVideo, m.aiKey,
+                  d.caption, d.ocr, d.manualCaption
+           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey WHERE m.id IN (:ids)"""
+    )
+    suspend fun searchable(ids: List<Long>): List<MediaWithDescription>
+
+    /** Every file's [SearchSignature], with the text hash of its [model] embedding. */
+    @Query(
+        """SELECT m.id, m.aiKey, m.sortDate, m.displayName, m.relativePath, d.describedAt, e.textHash
+           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
+           LEFT JOIN ai_embeddings e ON e.hash = m.aiKey AND e.model = :model"""
+    )
+    suspend fun searchSignatures(model: String): List<SearchSignature>
+
     @Query("DELETE FROM ai_descriptions WHERE error IS NOT NULL")
-    suspend fun clearFailures()
+    suspend fun deleteFailures()
+
+    @Query("DELETE FROM ai_embeddings WHERE hash IN (SELECT hash FROM ai_descriptions WHERE error IS NOT NULL)")
+    suspend fun deleteEmbeddingsOfFailures()
+
+    /** Failed files, with whatever embedding they had, forgotten in one transaction, to be tried again. */
+    @Transaction
+    suspend fun clearFailures() {
+        deleteEmbeddingsOfFailures()
+        deleteFailures()
+    }
 
     /** Changes whenever a description is added or replaced (to refresh the search index). */
     @Query("SELECT COUNT(*) * 1000003 + COALESCE(MAX(describedAt), 0) FROM ai_descriptions")
@@ -236,7 +285,7 @@ interface AiDao {
 
 @Database(
     entities = [MediaEntity::class, DescriptionEntity::class, EmbeddingEntity::class, DisplayAspectEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -246,7 +295,7 @@ abstract class GalleryDatabase : RoomDatabase() {
     companion object {
         fun open(context: Context): GalleryDatabase =
             Room.databaseBuilder(context, GalleryDatabase::class.java, "gallery.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
 
         /** 2 learns displayed aspect ratios from thumbnails ([DisplayAspectEntity]). */
@@ -256,6 +305,13 @@ abstract class GalleryDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `display_aspect` (`id` INTEGER NOT NULL, " +
                         "`dateModified` INTEGER NOT NULL, `aspect` REAL NOT NULL, PRIMARY KEY(`id`))"
                 )
+            }
+        }
+
+        /** 3 counts the runs the models failed on a file ([DescriptionEntity.modelFailures]). */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `ai_descriptions` ADD COLUMN `modelFailures` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

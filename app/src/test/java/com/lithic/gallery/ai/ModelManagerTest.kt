@@ -33,12 +33,12 @@ class ModelManagerTest {
         System.setProperty("http.proxyHost", "127.0.0.1"); System.setProperty("http.proxyPort", "9")
         System.setProperty("https.proxyHost", "127.0.0.1"); System.setProperty("https.proxyPort", "9")
         models = ModelManager(context)
-        models.delete(key)
+        runBlocking { models.delete(key) }
     }
 
     @After
     fun tearDown() {
-        models.delete(key)
+        runBlocking { models.delete(key) }
         for (p in proxies) {
             val v = saved[p]
             if (v != null) System.setProperty(p, v) else System.clearProperty(p)
@@ -69,6 +69,19 @@ class ModelManagerTest {
         models.verifyCopied()
         assertThat(failure()).isNotNull()
         assertThat(failure()).isNotEqualTo(first)
+    }
+
+    @Test
+    fun aFileCopiedOverAVerifiedOneIsCheckedAgain() = runBlocking {
+        val official = File("../tools/weights/$key/${models.sources.getValue(key).file}")
+        assumeTrue("$official is missing: run tools/fetch_weights.py", official.exists())
+        copyIn(official.readBytes(), 1_000_000_000_000)
+        models.verifyCopied()
+        assertThat(models.state.value[key]).isEqualTo(ModelState.Ready)
+        // An interrupted or wrong copy over it, the same size.
+        copyIn(ByteArray(official.length().toInt()), 1_000_000_100_000)
+        models.verifyCopied()
+        assertThat(failure()).isNotNull()
     }
 
     @Test

@@ -25,7 +25,7 @@ object HybridSearch {
      * @param fields the fields searched.
      * @param queryEmbedding the query's embedding, or null to rank by keywords alone.
      * @param embeddings the documents' embeddings in a stable order (ties keep it).
-     * @param tieBreak orders equal keyword scores (smaller first), or null for insertion order.
+     * @param tieBreak orders equal keyword scores, or null for insertion order.
      */
     fun search(
         query: String,
@@ -33,14 +33,14 @@ object HybridSearch {
         fields: List<String>,
         queryEmbedding: FloatArray?,
         embeddings: Iterable<Pair<Int, FloatArray>>,
-        tieBreak: ((Int) -> Long)? = null,
+        tieBreak: Comparator<Int>? = null,
     ): List<Hit> {
         if (query.isBlank() || fields.isEmpty()) return emptyList()
         val bm25 = keyword.search(query, fields, tieBreak).take(TOP)
         val semanticWanted = queryEmbedding != null && (AI_CAPTION in fields || AI_OCR in fields)
         val semantic: List<Pair<Int, Float>> = if (!semanticWanted) emptyList() else {
             val scored = ArrayList<Pair<Int, Float>>()
-            for ((id, v) in embeddings) scored.add(id to dot(v, queryEmbedding!!))
+            for ((id, v) in embeddings) scored.add(id to dot(v, queryEmbedding))
             scored.sortedByDescending { it.second }.take(TOP)
         }
         val fused = LinkedHashMap<Int, Double>()

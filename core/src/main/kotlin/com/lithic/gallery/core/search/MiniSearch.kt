@@ -90,10 +90,10 @@ class MiniSearch(val fields: List<String>) {
      * best first.
      *
      * @param searchFields the fields to look in (a subset of [fields]); their order only breaks ties.
-     * @param tieBreak orders documents with equal scores (smaller first); null keeps MiniSearch's
-     *   order, which is the order they were added in.
+     * @param tieBreak orders documents with equal scores; null keeps MiniSearch's order, which is
+     *   the order they were added in (so it depends on the index's history).
      */
-    fun search(query: String, searchFields: List<String> = fields, tieBreak: ((Int) -> Long)? = null): List<Hit> {
+    fun search(query: String, searchFields: List<String> = fields, tieBreak: Comparator<Int>? = null): List<Hit> {
         val fieldIds = searchFields.map { f -> fields.indexOf(f).also { require(it >= 0) { "unknown field $f" } } }
         val terms = tokenize(query).map(::processTerm).filter { it.isNotEmpty() }
         if (terms.isEmpty() || fieldIds.isEmpty()) return emptyList()
@@ -104,7 +104,7 @@ class MiniSearch(val fields: List<String>) {
         }
         val hits = combined!!.map { (id, res) -> Hit(id, res.score * maxOf(res.terms.size, 1)) }
         return if (tieBreak == null) hits.sortedByDescending { it.score } // stable
-        else hits.sortedWith(compareByDescending<Hit> { it.score }.thenBy { tieBreak(it.id) })
+        else hits.sortedWith(compareByDescending<Hit> { it.score }.thenComparator { a, b -> tieBreak.compare(a.id, b.id) })
     }
 
     private class Result(var score: Double, val terms: MutableList<String>)

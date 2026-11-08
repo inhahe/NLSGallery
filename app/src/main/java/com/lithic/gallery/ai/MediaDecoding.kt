@@ -113,12 +113,12 @@ object MediaDecoding {
 
     /**
      * Text stored in EXIF or XMP: UTF-8, as phones write it and exiftool (thumbsup2's reader)
-     * takes it, else Latin-1; the NULs that end EXIF strings dropped. Null for null.
+     * takes it, else Latin-1; ended at its first NUL, as both end an EXIF string (a camera's
+     * fixed-size field holds whatever follows it). Null for null.
      */
     internal fun exifText(bytes: ByteArray?): String? {
         if (bytes == null) return null
-        var n = bytes.size
-        while (n > 0 && bytes[n - 1] == 0.toByte()) n--
+        val n = bytes.indexOf(0.toByte()).let { if (it < 0) bytes.size else it }
         return try {
             Charsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)

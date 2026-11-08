@@ -6,6 +6,7 @@ import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
+import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
@@ -47,7 +48,7 @@ class DescribeFailureTest {
         val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             .buildUpon().appendPath("2147483000").build()
         try {
-            app.ai.describe(item(gone, key), captionsOnly)
+            assertThat(app.ai.describe(item(gone, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
             assertThat(dao.description(key)).isNull()
         } finally {
             dao.deleteDescription(key)
@@ -73,7 +74,7 @@ class DescribeFailureTest {
             }
             val failed = DescriptionEntity(key, null, null, "", 1L, "out of memory")
             dao.upsertDescription(failed)
-            app.ai.describe(item(uri, key), captionsOnly)
+            assertThat(app.ai.describe(item(uri, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
             assertThat(dao.description(key)).isEqualTo(failed)
         } finally {
             resolver.delete(uri, null, null)
@@ -95,7 +96,7 @@ class DescribeFailureTest {
         val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)!!
         try {
             resolver.openOutputStream(uri)!!.use { out -> out.write(ByteArray(4096) { (it * 31).toByte() }) }
-            app.ai.describe(item(uri, key), captionsOnly)
+            assertThat(app.ai.describe(item(uri, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Failed)
             assertThat(dao.description(key)?.error).isNotNull()
         } finally {
             resolver.delete(uri, null, null)

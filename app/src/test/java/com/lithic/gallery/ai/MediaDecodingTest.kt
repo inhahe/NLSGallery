@@ -26,6 +26,9 @@ class MediaDecodingTest {
         // Not valid UTF-8: an old camera's Latin-1.
         assertThat(MediaDecoding.exifText(byteArrayOf('C'.code.toByte(), 0xE9.toByte(), 0))).isEqualTo("Cé")
         assertThat(MediaDecoding.exifText(byteArrayOf(0))).isEqualTo("")
+        // A fixed-size field: the string ends at its NUL, whatever fills the rest.
+        assertThat(MediaDecoding.exifText("OLYMPUS DIGITAL CAMERA".toByteArray() + byteArrayOf(0, 32, 32, 0x41)))
+            .isEqualTo("OLYMPUS DIGITAL CAMERA")
         assertThat(MediaDecoding.exifText(null)).isNull()
     }
 

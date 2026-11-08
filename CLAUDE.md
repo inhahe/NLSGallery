@@ -19,12 +19,13 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
 - `gradlew :core:test`: the pipeline against thumbsup2. Needs `tools/testdata` and
   `tools/weights` (see `tools/README.md`); tests whose files are absent are skipped, not failed.
   The model tests take a few minutes; `CraftTilingTest` longer.
-- `gradlew :app:testDebugUnitTest`: category rules, caption text, and (Robolectric, Room in
-  memory) the search index kept up to date against one built afresh.
+- `gradlew :app:testDebugUnitTest`: category rules, caption text, model-failure blame, and
+  (Robolectric, Room in memory) the search index kept up to date against one built afresh,
+  descriptions and embeddings kept together, copied model files checked.
 - On a phone: `tools\push-test-data.bat` (`emulator` for the emulator), `push-models.bat debug`,
   then run `OnDeviceModelTest` / `OnDeviceBenchmark` / `DescribeFailureTest` /
-  `MediaDecodingDeviceTest` (the last two also on the emulator, whose debug app has the
-  models) with `adb shell am instrument -w -e class
+  `MediaDecodingDeviceTest` / `MigrationTest` (the last three also on the emulator, whose debug
+  app has the models) with `adb shell am instrument -w -e class
   com.lithic.gallery.<Test> com.lithic.gallery.debug.test/androidx.test.runner.AndroidJUnitRunner`.
   Not `gradlew connectedAndroidTest`: it may uninstall the app afterwards, which deletes the
   1.2 GB of models in its folder.
@@ -53,4 +54,5 @@ first build handed over.
 - CRAFT needs ~1.3 KB per input pixel: never run it whole on a large canvas (see tiling in
   `design.md`).
 - Room schema changes need a migration (`GalleryDatabase`), not a reinstall: the models live
-  in the app's folder and a clear-data loses them.
+  in the app's folder and a clear-data loses them. Add each one to `MigrationTest`, and commit
+  the schema KSP writes to `app/schemas`.

@@ -112,12 +112,15 @@ ships in assets.
   name: screenshots, messaging apps, downloads, camera, other) and an `aiKey` =
   sha1(name, size, mtime), so moved files keep their descriptions (thumbsup2 keys its cache the
   same way).
-- Room (`Database.kt`, version 2; migrations kept, schemas in `app/schemas`): `media` (the
-  library copy), `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`;
-  caption/ocr nullable per part; `error` marks a file that opened but could not be decoded or
-  ran out of memory, not tried again until it changes or "Retry failed"), `ai_embeddings`
-  (`aiKey`, model, vector, hash of the text embedded). A description and its embedding are
-  written in one transaction (`saveDescribed`), and reset in one (`forget`).
+- Room (`Database.kt`, version 3; migrations kept and tested from every version shipped,
+  `MigrationTest` on the device, schemas in `app/schemas`): `media` (the library copy),
+  `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`; caption/ocr
+  nullable per part; `error` marks a file that opened but could not be decoded, ran out of
+  memory, or that the models failed on in three runs (`modelFailures`), not tried again until
+  it changes or "Retry failed"; `describedAt` is later at every write, which the search index
+  relies on), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded). A
+  description and its embedding are written in one transaction (`saveDescribed`), and reset in
+  one (`forget`, and "Retry failed", `clearFailures`).
 - `MediaRepository.sync()` diffs MediaStore against the table (upsert changed, delete gone);
   run at start, on MediaStore change notifications (debounced) while open, and by the workers.
 - `SettingsStore`: DataStore preferences, one `Settings` value.
@@ -164,34 +167,47 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 - `ModelManager`: models.json from assets; weights in `Android/data/<app>/files/models/<key>/`
   (removed with the app; reachable over USB, so `push-models.bat` can install them); resumable
   HTTP download (Range), zip member extraction, SHA-256 check, `.verified` marker; files copied
-  in without a marker are hashed by `verifyCopied` (app start and resume, and each worker run),
-  and so is one copied over a file that failed its check; a download checks a complete file in
-  place before fetching. A lock per model keeps checking and downloading off the same file. Any
-  download failure marks the model failed (the worker retries only network errors). The app
+  in without a marker are hashed by `verifyCopied` (app start and resume, and each worker run).
+  The marker records the hash, length and modification time, so a file copied over a verified
+  one is checked again, and so is one copied over a file that failed its check. A download
+  checks a complete file in place before fetching (unless it failed already). A lock per model
+  keeps checking, downloading and deleting off the same file; `verifyCopied` waits for a check
+  in progress (its caller gets the verdict) and skips a model being downloaded. Any download
+  failure marks the model failed (the worker retries only network errors). The app
   creates its `models` folder itself: a folder adb creates there belongs to the shell user and
   the app cannot read what is copied into it, so the copy scripts open the app first.
 - `AiEngine`: opens only the sessions a pass needs (BLIP + MiniLM for captions; CRAFT,
   recognizer + MiniLM for text), describes one file at a time (serialized), saves description
   and embedding together (re-embedded when OCR text arrives: the embedding records a hash of
-  its text), `release()` closes the models. A failure is the file's only when reading it fails:
-  then the error is saved, unless the file cannot be opened at all just now (deleted, card
-  removed), which leaves it for the next run. A failure in the models (ONNX Runtime unable to
-  allocate) saves nothing and the next run tries again. A file on record as failed is skipped,
-  so the text pass does not retry what the caption pass just failed on (`DescribeFailureTest`).
+  its text), `release()` closes the models. `describe` reports what it did (`Outcome`). Reading
+  the file failing is the file's fault: the error is saved, unless the file cannot be opened at
+  all just now (deleted, card removed), which leaves it for the next run. The models failing
+  saves nothing: whose fault it is shows over the run (`ModelFailureTracker` in
+  `DescribeWorker`). If the models work for another file in the run, the failure is the file's
+  and counted (`recordModelFailure`; the third sets it aside as failed); three in a row say the
+  models are failing (memory, say), and the run stops, blaming no file, to be retried later.
+  The models are closed after each such failure, giving back their memory. A file on record as
+  failed is skipped, so the text pass does not retry what the caption pass just failed on
+  (`DescribeFailureTest`).
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.
 - `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's) plus the embeddings,
   brought up to date by the first search after files or descriptions change (an open search
-  reruns at most every 5 s while describing changes them every couple of seconds): it reads
-  every file's searchable fields, compares a 64-bit hash of them with what it indexed, and
-  re-indexes only the files that changed, with their embeddings (so a search typed during
-  describing waits for a query, not a re-tokenization of the library). Refreshes run one at a
-  time and change the index only under its lock, after the database reads, so a cancelled one
-  leaves it as it was. `SearchServiceTest` (Robolectric, Room in memory): through 25 rounds of
-  random changes it answers exactly as a fresh index over the same database. Queries are embedded with a MiniLM session kept for search, freed (about 90 MB) when
-  the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM is
-  removed; ties break newest first.
+  reruns at most every 5 s while describing changes them every couple of seconds). A refresh
+  reads every file's `SearchSignature` (key, name, folder, when its description was written,
+  which text its embedding is of: a few dozen bytes), compares a 64-bit hash of it with what
+  it indexed, and reads text and embeddings only for the files that changed. A write during
+  the reads changes the signature again, so the next refresh mends what this one read in
+  between. Refreshes run one at a time in the service's own scope (a search cancelled by the
+  next keystroke leaves the refresh it waited for running) and change the index only under its
+  lock. Equal scores break on date, then media id, so a long-kept index orders exactly as a
+  fresh one. `SearchServiceTest` (Robolectric, Room in memory): through 25 rounds of random
+  changes, with tied dates and tied meanings, it answers exactly as a fresh index over the same
+  database. The view model invalidates on file changes in the same flow that reruns the search,
+  before it. Queries are embedded with a MiniLM session kept for search, freed (about 90 MB)
+  when the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM
+  is removed.
 
 ### Background work (`work/Workers.kt`)
 

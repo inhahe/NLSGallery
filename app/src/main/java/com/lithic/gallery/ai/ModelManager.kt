@@ -60,8 +60,11 @@ class ModelManager(private val context: Context) {
     private val _state = MutableStateFlow(sources.keys.associateWith { initialState(it) })
     val state: StateFlow<Map<String, ModelState>> = _state
 
-    /** Held while a model's file is downloaded or checked, so the two never meet on one file. */
+    /** Held while a model's file is downloaded, checked or deleted, so these never meet on one file. */
     private val locks = sources.keys.associateWith { Mutex() }
+
+    /** Models a download is fetching: [verifyCopied] leaves them alone rather than wait minutes. */
+    private val downloading: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /** The weight file (length, modification time) each Failed model failed with. */
     private val failedWith = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Long>>()
@@ -80,35 +83,43 @@ class ModelManager(private val context: Context) {
     private fun weights(key: String) = File(File(root, key), sources.getValue(key).file)
 
     /**
-     * A file that is present, of the right size, and was verified once, is ready. One of the
-     * right size not yet verified (copied in over USB) is checked by [verifyCopied].
+     * A file that is present, of the right size, and verified as it is now (its marker records
+     * its hash, length and modification time), is ready. One of the right size not verified as it
+     * is (copied in over USB, or copied over a verified one) is checked by [verifyCopied].
      */
-    private fun initialState(key: String): ModelState {
-        val f = weights(key)
-        return when {
-            f.length() != sources.getValue(key).size -> ModelState.Missing
-            verifiedMarker(key).exists() -> ModelState.Ready
-            else -> ModelState.Verifying
-        }
+    private fun initialState(key: String): ModelState = when {
+        weights(key).length() != sources.getValue(key).size -> ModelState.Missing
+        verifiedAsIs(key) -> ModelState.Ready
+        else -> ModelState.Verifying
     }
+
+    private fun verifiedAsIs(key: String): Boolean {
+        val marker = verifiedMarker(key)
+        val s = stamp(key) ?: return false
+        return marker.exists() && marker.readText() == markerText(sources.getValue(key).sha256, s)
+    }
+
+    private fun markerText(sha: String, stamp: Pair<Long, Long>) = "$sha\n${stamp.first}\n${stamp.second}\n"
 
     /**
      * Checks weight files that arrived without being downloaded (push-models.bat), including
-     * ones copied in while the app was running, and over one that failed. A model being
-     * downloaded is left alone.
+     * ones copied in while the app was running, over one that failed, or over a verified one.
+     * A model being downloaded is left alone; one being checked is waited for, so a caller sees
+     * the verdict.
      */
     suspend fun verifyCopied() = withContext(Dispatchers.IO) {
         for (key in sources.keys) {
-            val lock = locks.getValue(key)
-            if (!lock.tryLock()) continue
-            try {
+            if (key in downloading) continue
+            locks.getValue(key).withLock {
                 val s = _state.value[key]
-                if (s == ModelState.Missing || (s is ModelState.Failed && stamp(key) != failedWith[key])) {
-                    set(key, initialState(key))
+                val look = when (s) {
+                    ModelState.Missing -> true
+                    is ModelState.Failed -> stamp(key) != failedWith[key]
+                    ModelState.Ready -> !verifiedAsIs(key)
+                    else -> false
                 }
+                if (look) set(key, initialState(key))
                 if (_state.value[key] == ModelState.Verifying) check(key)
-            } finally {
-                lock.unlock()
             }
         }
     }
@@ -123,12 +134,25 @@ class ModelManager(private val context: Context) {
             return false
         }
         if (sha == sources.getValue(key).sha256) {
-            verifiedMarker(key).writeText(sha)
+            if (!markVerified(key, sha)) return false
             set(key, ModelState.Ready)
             return true
         }
         fail(key, "the copied file does not match (SHA-256 $sha)")
         return false
+    }
+
+    /** Records that [key]'s file, as it is now, hashes to [sha]; false if it vanished meanwhile. */
+    private fun markVerified(key: String, sha: String): Boolean {
+        val s = stamp(key)
+        return try {
+            if (s == null) throw IOException("gone")
+            verifiedMarker(key).writeText(markerText(sha, s))
+            true
+        } catch (e: IOException) {
+            set(key, ModelState.Missing)
+            false
+        }
     }
 
     /** The weight file's length and modification time, or null when there is none. */
@@ -157,22 +181,28 @@ class ModelManager(private val context: Context) {
             val total = todo.sumOf { sources.getValue(it).size }
             var before = 0L
             for (key in todo) {
-                locks.getValue(key).withLock {
-                    if (isReady(key)) return@withLock
-                    if (initialState(key) == ModelState.Verifying) {
-                        set(key, ModelState.Verifying)
-                        if (check(key)) return@withLock
+                downloading.add(key)
+                try {
+                    locks.getValue(key).withLock {
+                        if (isReady(key)) return@withLock
+                        // A complete copy is checked rather than fetched again, unless it failed already.
+                        if (initialState(key) == ModelState.Verifying && stamp(key) != failedWith[key]) {
+                            set(key, ModelState.Verifying)
+                            if (check(key)) return@withLock
+                        }
+                        try {
+                            downloadOne(key) { done -> progress(before + done, total) }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            // Stopped (cancelled, or the network went): the partial file stays to resume from.
+                            set(key, ModelState.Missing)
+                            throw e
+                        } catch (e: Exception) {
+                            fail(key, e.message ?: e.javaClass.simpleName)
+                            throw e
+                        }
                     }
-                    try {
-                        downloadOne(key) { done -> progress(before + done, total) }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        // Stopped (cancelled, or the network went): the partial file stays to resume from.
-                        set(key, ModelState.Missing)
-                        throw e
-                    } catch (e: Exception) {
-                        fail(key, e.message ?: e.javaClass.simpleName)
-                        throw e
-                    }
+                } finally {
+                    downloading.remove(key)
                 }
                 before += sources.getValue(key).size
             }
@@ -204,7 +234,7 @@ class ModelManager(private val context: Context) {
         }
         dest.delete()
         if (!tmp.renameTo(dest)) throw IOException("could not move ${tmp.name} into place")
-        verifiedMarker(key).writeText(sha)
+        if (!markVerified(key, sha)) throw IOException("${src.file} vanished once in place")
         set(key, ModelState.Ready)
     }
 
@@ -280,11 +310,13 @@ class ModelManager(private val context: Context) {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** Deletes [key]'s downloaded files. */
-    fun delete(key: String) {
-        File(root, key).deleteRecursively()
-        failedWith.remove(key)
-        set(key, ModelState.Missing)
+    /** Deletes [key]'s downloaded files (after a check of them in progress). */
+    suspend fun delete(key: String) = withContext(Dispatchers.IO) {
+        locks.getValue(key).withLock {
+            File(root, key).deleteRecursively()
+            failedWith.remove(key)
+            set(key, ModelState.Missing)
+        }
     }
 
     /** Bytes the downloaded models take. */

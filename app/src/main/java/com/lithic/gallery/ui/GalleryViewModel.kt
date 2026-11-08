@@ -25,7 +25,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
@@ -95,9 +94,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /** Bumps when files or descriptions change, so open results are recomputed. */
     private val indexVersion = MutableStateFlow(0)
 
-    /** Results for [query] (null when not searching), best first. */
+    /**
+     * Results for [query] (null when not searching), best first. A change to the files (added,
+     * removed, renamed, moved) invalidates the index here, before the search it reruns.
+     */
     val searchResults: StateFlow<List<SearchHit>?> =
-        combine(query.debounce(250), settings, category, allMedia, indexVersion) { q, s, c, all, _ ->
+        combine(query.debounce(250), settings, category, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, c, all, _ ->
             SearchInput(q, s, c, all)
         }.mapLatest { input ->
             if (input.query.isBlank()) return@mapLatest null
@@ -186,10 +188,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             app.repository.changes().debounce(1000).collect { app.repository.sync() }
         }
-        // Files or descriptions changed: the next search updates the index first, and an open one
-        // is rerun, at most every 5 s while photos are being described.
+        // Descriptions changed: the next search updates the index first, and an open one is
+        // rerun, at most every 5 s while photos are being described. (File changes rerun it
+        // through searchResults.)
         viewModelScope.launch {
-            merge(allMedia.map { it.size.toLong() }, app.db.ai().observeVersion())
+            app.db.ai().observeVersion()
                 .onEach { app.search.invalidate() }
                 .sample(5000)
                 .collect { if (query.value.isNotBlank()) indexVersion.value++ }
@@ -241,9 +244,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun cancelDownload() = Work.cancelDownload(app)
 
     fun deleteModel(key: String) {
-        app.models.delete(key)
-        // Search stops using it at once (it checks the files); this frees what it had open.
-        if (key == ModelManager.MINILM) viewModelScope.launch { app.search.releaseEmbedder() }
+        viewModelScope.launch {
+            app.models.delete(key)
+            // Search stops using it at once (it checks the model's state); this frees what it had open.
+            if (key == ModelManager.MINILM) app.search.releaseEmbedder()
+        }
     }
 
     fun modelSizes(): Map<String, Long> = app.models.sources.mapValues { it.value.size }
