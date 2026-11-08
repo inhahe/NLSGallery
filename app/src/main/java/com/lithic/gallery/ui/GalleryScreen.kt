@@ -54,7 +54,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -349,9 +349,11 @@ private fun compactCount(n: Int) = if (n >= 10_000) "${n / 1000}k" else n.toStri
 @Composable
 private fun CategoryTabs(tabs: List<Category>, selected: Category, onSelect: (Category) -> Unit) {
     val index = tabs.indexOf(selected).coerceAtLeast(0)
-    TabRow(
+    SecondaryTabRow(
         selectedTabIndex = index,
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        // TabRow's colour, which this replaces (SecondaryTabRow's own is the surface's).
+        contentColor = androidx.compose.material3.TabRowDefaults.primaryContentColor,
         divider = { HorizontalDivider(thickness = 0.5.dp) },
     ) {
         tabs.forEach { c ->
@@ -368,7 +370,7 @@ private fun CategoryTabs(tabs: List<Category>, selected: Category, onSelect: (Ca
 
 @Composable
 private fun SearchChips(
-    /** Whether words are searched for: not when the query is only a date. */
+    /** Whether words are searched for: not when nothing is left to search for ("last summer", "show me videos"). */
     words: Boolean,
     fields: Set<String>,
     onToggle: (String) -> Unit,
