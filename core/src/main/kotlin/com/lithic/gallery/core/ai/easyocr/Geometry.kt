@@ -86,7 +86,12 @@ object Geometry {
         return Components(labels, count, left, top, width, height, area)
     }
 
-    /** cv2.minAreaRect: centre, size and angle in degrees, all float32 as OpenCV keeps them. */
+    /**
+     * cv2.minAreaRect: centre, size and angle in degrees, all float32 as OpenCV keeps them. The
+     * angle is in [-90, 0), which fixes which side is the width (OpenCV 4.13's convention; older
+     * versions described the same rectangle differently, and boxPoints rounds each description's
+     * corners differently).
+     */
     class RotatedRect(val cx: Float, val cy: Float, val width: Float, val height: Float, val angle: Float)
 
     /**
@@ -94,28 +99,44 @@ object Geometry {
      * order np.where gives them, which OpenCV's hull uses to pick its first vertex).
      */
     fun minAreaRect(xs: IntArray, ys: IntArray): RotatedRect {
+        require(xs.isNotEmpty() && xs.size == ys.size) { "minAreaRect needs points" }
         val hull = convexHull(xs, ys)
         val n = hull.size
         val px = FloatArray(n) { xs[hull[it]].toFloat() }
         val py = FloatArray(n) { ys[hull[it]].toFloat() }
-        if (n > 2) {
-            val out = rotatingCalipers(px, py)
-            val cx = out[0] + (out[2] + out[4]) * 0.5f
-            val cy = out[1] + (out[3] + out[5]) * 0.5f
-            val w = sqrt(out[2].toDouble() * out[2] + out[3].toDouble() * out[3]).toFloat()
-            val h = sqrt(out[4].toDouble() * out[4] + out[5].toDouble() * out[5]).toFloat()
-            val a = atan2(out[3].toDouble(), out[2].toDouble()).toFloat()
-            return RotatedRect(cx, cy, w, h, (a * 180 / Math.PI).toFloat())
+        // An upright box and a single point get -90 degrees.
+        var angle = -Math.PI / 2
+        val cx: Float
+        val cy: Float
+        var w: Float
+        var h: Float
+        when {
+            n > 2 -> {
+                // A corner, then the side vectors (ax, ay) and (bx, by).
+                val out = rotatingCalipers(px, py)
+                cx = out[0] + (out[2] + out[4]) * 0.5f
+                cy = out[1] + (out[3] + out[5]) * 0.5f
+                w = sqrt(out[4].toDouble() * out[4] + out[5].toDouble() * out[5]).toFloat()
+                h = sqrt(out[2].toDouble() * out[2] + out[3].toDouble() * out[3]).toFloat()
+                if (out[2] == 0f && out[3] > 0f) { val t = w; w = h; h = t }
+                else angle = -atan2(out[2].toDouble(), out[3].toDouble())
+            }
+            n == 2 -> {
+                cx = (px[0] + px[1]) * 0.5f
+                cy = (py[0] + py[1]) * 0.5f
+                val dx = (px[0] - px[1]).toDouble()
+                val dy = (py[0] - py[1]).toDouble()
+                w = 0f
+                h = sqrt(dx * dx + dy * dy).toFloat()
+                when {
+                    dx == 0.0 -> { w = h; h = 0f }
+                    dy < 0 -> { angle = atan2(dy, dx); w = h; h = 0f }
+                    dy > 0 -> angle = -atan2(dx, dy)
+                }
+            }
+            else -> { cx = px[0]; cy = py[0]; w = 0f; h = 0f }
         }
-        if (n == 2) {
-            val cx = (px[0] + px[1]) * 0.5f
-            val cy = (py[0] + py[1]) * 0.5f
-            val dx = (px[1] - px[0]).toDouble()
-            val dy = (py[1] - py[0]).toDouble()
-            val a = atan2(dy, dx).toFloat()
-            return RotatedRect(cx, cy, sqrt(dx * dx + dy * dy).toFloat(), 0f, (a * 180 / Math.PI).toFloat())
-        }
-        return RotatedRect(px[0], py[0], 0f, 0f, 0f)
+        return RotatedRect(cx, cy, w, h, (angle * 180 / Math.PI).toFloat())
     }
 
     /** cv2.boxPoints: the rectangle's corners as (x0, y0, …, x3, y3), float32 arithmetic. */
@@ -213,8 +234,9 @@ object Geometry {
     }
 
     /**
-     * OpenCV's rotatingCalipers in CALIPERS_MINAREARECT mode over hull points ([px], [py]):
-     * a corner and the two side vectors of the smallest rectangle, (x, y, ax, ay, bx, by).
+     * OpenCV's rotatingCalipers in CALIPERS_MINAREARECT mode over the counter-clockwise hull
+     * points ([px], [py]): a corner and the two side vectors of the smallest rectangle,
+     * (x, y, ax, ay, bx, by).
      */
     private fun rotatingCalipers(px: FloatArray, py: FloatArray): FloatArray {
         val n = px.size
@@ -238,34 +260,24 @@ object Geometry {
             invLen[i] = (1.0 / sqrt(dx * dx + dy * dy)).toFloat()
             p0x = px[ni]; p0y = py[ni]
         }
-        var orientation = 0f
-        run {
-            var ax = vx[n - 1].toDouble()
-            var ay = vy[n - 1].toDouble()
-            for (i in 0 until n) {
-                val bx = vx[i].toDouble()
-                val by = vy[i].toDouble()
-                val convexity = ax * by - ay * bx
-                if (convexity != 0.0) { orientation = if (convexity > 0) 1f else -1f; return@run }
-                ax = bx; ay = by
-            }
-        }
-        check(orientation != 0f) { "degenerate hull" }
-        var baseA = orientation
+        // minAreaRect passes the hull's orientation (counter-clockwise) rather than measuring it.
+        var baseA = 1f
         var baseB = 0f
         val seq = intArrayOf(bottom, right, top, left)
         var bufLeft = 0; var bufA = 0f; var bufWidth = 0f; var bufB = 0f; var bufHeight = 0f; var bufBottom = 0
+        val rotX = FloatArray(4)
+        val rotY = FloatArray(4)
         for (k in 0 until n) {
-            val dp0 = +baseA * vx[seq[0]] + baseB * vy[seq[0]]
-            val dp1 = -baseB * vx[seq[1]] + baseA * vy[seq[1]]
-            val dp2 = -baseA * vx[seq[2]] - baseB * vy[seq[2]]
-            val dp3 = +baseB * vx[seq[3]] - baseA * vy[seq[3]]
-            val dp = floatArrayOf(dp0, dp1, dp2, dp3)
+            // Each caliper's next edge, turned to the first caliper's direction; the one turning
+            // least (furthest clockwise) leads.
+            rotX[0] = vx[seq[0]]; rotY[0] = vy[seq[0]]
+            rotX[1] = vy[seq[1]]; rotY[1] = -vx[seq[1]]
+            rotX[2] = -vx[seq[2]]; rotY[2] = -vy[seq[2]]
+            rotX[3] = -vy[seq[3]]; rotY[3] = vx[seq[3]]
             var main = 0
-            var maxCos = dp[0] * invLen[seq[0]]
             for (i in 1 until 4) {
-                val c = dp[i] * invLen[seq[i]]
-                if (c > maxCos) { main = i; maxCos = c }
+                // firstVecIsRight(rot[i], rot[main]): rot[i] turned 90 degrees clockwise, dotted.
+                if (rotY[i] * rotX[main] + -rotX[i] * rotY[main] < 0f) main = i
             }
             val pi = seq[main]
             val leadX = vx[pi] * invLen[pi]

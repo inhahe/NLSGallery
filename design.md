@@ -33,6 +33,14 @@ Pillow / OpenCV for the image operations (`tools/make_*_reference.*`). The image
 bit-exact, including OpenCV quirks EasyOCR depends on (its "LANCZOS" flag is INTER_LINEAR; its
 grey conversion of thumbsup2's RGB array weights the channels as BGR).
 
+The geometry (`Geometry`: hull, `minAreaRect`, `boxPoints`) follows **OpenCV 4.13**, the
+version in thumbsup2's environment, to the float32 bit (`GeometryTest`, 520 masks against
+`tools/reference/geometry.json`). It has to: box corners are scaled then truncated to
+integers, so one ulp can move a box edge a pixel. Older OpenCV describes the same rectangle
+with width and height swapped and another angle, which rounds the corners differently; when
+thumbsup2's OpenCV changes, regenerate the reference (`tools/make_geometry_reference.py`) and
+`ocr*.json`, and port what changed.
+
 Deliberate differences from thumbsup2:
 
 - **EXIF orientation is applied** before describing. thumbsup2 opens images with PIL without

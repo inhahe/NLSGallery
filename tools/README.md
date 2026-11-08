@@ -26,6 +26,7 @@ Without thumbsup2's environment, `requirements.txt` here lists what to install f
 | `fetch_test_images.py` | any (Pillow) | `testdata/`: 35 COCO val2017 photos, synthetic screenshots / document / sign / rotated text / meme, an EXIF-rotated photo; `manifest.json` with SHA-256 |
 | `make_reference.py --device cpu\|cuda` | thumbsup2's | `reference/thumbsup2_<device>.json`: what thumbsup2's unmodified `ai_describe.py --embed` says about each test image |
 | `make_image_reference.py [raw] [ops] [ocr]` | thumbsup2's | `testdata/raw/` (pixels as PIL decodes them), `testdata/ops/` (torchvision / Pillow / OpenCV operation outputs), `reference/ocr.json` (EasyOCR's boxes and text, float32 CPU unquantized) |
+| `make_geometry_reference.py` | thumbsup2's | `reference/geometry.json`: OpenCV's `minAreaRect` and `boxPoints` on 520 masks shaped like CRAFT's components |
 | `make_tokenizer_reference.py` | thumbsup2's | `reference/tokenizer.json`: MiniLM encodings and BLIP decodings |
 | `make_search_reference.mjs` | Node | `reference/search.json`: thumbsup2's MiniSearch results |
 | `export_models.py` | thumbsup2's + onnx | `app/src/main/assets/models/`: the graphs, `models.json`, `vocab.txt`; checks each against PyTorch |
@@ -40,6 +41,7 @@ Without thumbsup2's environment, `requirements.txt` here lists what to install f
 python tools/fetch_test_images.py
 wsl: ~/gallery-tools/.venv/bin/python tools/make_reference.py --device cuda   (and --device cpu)
 wsl: ~/gallery-tools/.venv/bin/python tools/make_image_reference.py
+wsl: ~/gallery-tools/.venv/bin/python tools/make_geometry_reference.py
 wsl: ~/gallery-tools/.venv/bin/python tools/make_tokenizer_reference.py
 node tools/make_search_reference.mjs
 wsl: ~/gallery-tools/.venv/bin/python tools/export_models.py
