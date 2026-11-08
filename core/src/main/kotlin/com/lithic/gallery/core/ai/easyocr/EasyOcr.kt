@@ -84,14 +84,19 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         while (accelerated.isNotEmpty() && accelerated.keys.sumOf { (sh, sw) -> sh.toLong() * sw } + need > acceleratedCachePixels) {
             accelerated.remove(accelerated.keys.first())?.close()
         }
+        acceleratedCompiles++
         return onnx.session("craft", acceleratedGraph, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).also { accelerated[h to w] = it }
     }
 
-    /** Whether the accelerator should take tiles of [h]×[w]; the shape is noted as seen either way. */
+    /** Sessions compiled for the accelerator so far (tests count them: a canvas should need one). */
+    internal var acceleratedCompiles = 0
+        private set
+
+    /** Whether the accelerator (there is one) should take tiles of [h]×[w]; the shape is noted as seen either way. */
     private fun wantsAccelerator(h: Int, w: Int): Boolean {
         val pixels = h.toLong() * w
         val repeated = !shapesSeen.add(h to w)
-        return accelerator != null && (pixels >= acceleratedFrom || (repeated && pixels >= acceleratedRepeatFrom))
+        return pixels >= acceleratedFrom || (repeated && pixels >= acceleratedRepeatFrom)
     }
 
     /** CRAFT on [input] (1×3×[h]×[w]) on the accelerator; on the CPU once it has failed (it is dropped then). */
@@ -210,7 +215,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         var onAccelerator = false
         var plan = tilePlan(tw32, th32, maxTilePixels, tileMargin)
         if (accelerator != null) {
-            val tiled = tilePlan(tw32, th32, minOf(maxTilePixels, acceleratedMaxTilePixels), tileMargin)
+            val tiled = tilePlan(tw32, th32, minOf(maxTilePixels, acceleratedMaxTilePixels), tileMargin, uniform = true)
             val shapeH = windows(tiled.second, th32, tileMargin, uniform = true).first().let { (a, b) -> b - a }
             val shapeW = windows(tiled.first, tw32, tileMargin, uniform = true).first().let { (a, b) -> b - a }
             if (wantsAccelerator(shapeH, shapeW)) {
@@ -264,8 +269,10 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
          * How a [w]×[h] input (multiples of 32) is cut: the cores along x and along y. Of the layouts
          * of up to 16×16 tiles whose largest tile (core plus margins) fits [maxTilePixels] (with [tileMargin] around each core), the one
          * computing the fewest pixels in all; if none fits, the one with the smallest largest tile.
+         * With [uniform], tiles are counted as [windows] makes them for an accelerator, all the
+         * largest one's size.
          */
-        internal fun tilePlan(w: Int, h: Int, maxTilePixels: Long, tileMargin: Int): Pair<List<Pair<Int, Int>>, List<Pair<Int, Int>>> {
+        internal fun tilePlan(w: Int, h: Int, maxTilePixels: Long, tileMargin: Int, uniform: Boolean = false): Pair<List<Pair<Int, Int>>, List<Pair<Int, Int>>> {
             if (w.toLong() * h <= maxTilePixels) return listOf(0 to w) to listOf(0 to h)
             require(tileMargin % 32 == 0) { "tile margin $tileMargin" }
             var best: Pair<List<Pair<Int, Int>>, List<Pair<Int, Int>>>? = null
@@ -280,7 +287,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
                 val ye = ys.map { (s, e) -> minOf(h, e + tileMargin) - maxOf(0, s - tileMargin) }
                 val largest = xe.max().toLong() * ye.max()
                 if (largest <= maxTilePixels) {
-                    val total = xe.sum().toLong() * ye.sum()
+                    val total = if (uniform) xe.size.toLong() * xe.max() * ye.size * ye.max() else xe.sum().toLong() * ye.sum()
                     if (total < bestTotal) { bestTotal = total; best = xs to ys }
                 } else if (largest < fallbackArea) {
                     fallbackArea = largest; fallback = xs to ys

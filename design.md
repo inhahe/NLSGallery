@@ -79,6 +79,10 @@ Deliberate differences from thumbsup2:
   `accept`): "beach last summer" ranks among the files taken last summer, so the best 200 are
   the best of those, not the best of the whole library cut afterwards. Keyword scores still
   weigh words by the whole index. thumbsup2 has neither dates in queries nor tabs.
+- **A request a query opens with is not searched for** (`QueryRequest`): "show me photos of
+  dogs" searches for "dogs", where thumbsup2 would ask every document for all five words (its
+  keyword search wants them all); "videos of dogs" searches for dogs among videos. A query that
+  makes no request ("photo booth", "videos") is searched as typed, as thumbsup2 does.
 - **Keyword scores use a field's exact mean length**, not MiniSearch's running average, whose
   last bits depend on the order documents were added and removed in: the app's index changes
   file by file, and must score the same as one built afresh. Scores agree with thumbsup2's to
@@ -253,8 +257,11 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   before it. Queries are embedded with a MiniLM session kept for search, freed (about 90 MB)
   when the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM
   is removed. `search` takes an `accept` (by media id) that narrows the candidates before
-  ranking (`HybridSearch`): the view model passes the set of files taken on those days and in
-  this tab, worked out once per search (off the main thread, like the whole search flow).
+  ranking (`HybridSearch`): the view model passes the set of files the search may find (taken
+  on those days, in this tab, videos when asked for, and only files it knows of, so files the
+  index has and its list has not yet cannot take places among the best), worked out once per
+  search, off the main thread like the whole search flow. "Only in this tab" narrows nothing
+  in the All tab.
 - **Dates in a query** (`core/search/DatePhrases`, `DatePhrasesTest` at a fixed today): the
   first date phrase is taken out of the query and becomes a filter on the day each file was
   taken (`sortDate` in the phone's time zone); the rest is searched as words. Rules are tried in
@@ -273,12 +280,15 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   also an ordinary word (a month, season, holiday, weekday, a bare "90s") is a date only with
   something that makes it one ("last", "in", a year) or when it is the whole query: "christmas
   tree" searches for Christmas trees; "may" is never a date alone. Words leading into the phrase
-  ("taken in", "from") go with it, and a request the rest opens with is not searched for: "show
-  me photos of dogs from last summer" searches for "dogs" ("show me", "find", or a word for
-  pictures followed by "of", "from", "on"...; "photo booth" stays). The rules' patterns are
-  compiled once (the companion's `RULES`); a reading is made per query on the phone's today and
-  locale, today moving on at midnight in an open search. A date alone lists every file taken
-  then, newest first (`SearchHit` without a result), which works before anything is described.
+  ("taken in", "from") go with it, and the request the query opens with is not searched for
+  (`QueryRequest`, read across the phrase, so "videos from last summer" lists last summer's
+  videos): "show me photos of dogs from last summer" searches for "dogs" ("show me", "find", or a
+  word for pictures or videos followed by "of", "from", "on"...; "photo booth" stays). The
+  rules' patterns are compiled once (the companion's `RULES`); a query is read on the clock's
+  day and the locale, and read again when the day moves on (at midnight, and when the app comes
+  back: a sleeping phone's timers run late). With no words left to search for, every file
+  allowed is listed, newest first (`SearchHit` without a result), which works before anything is
+  described.
   The filter's label ("summer 2026: Jun 1, 2026 – Aug 31, 2026") shows as a chip above the
   results; its × searches the query as words instead (`GalleryViewModel.dismissDate`, until the
   query changes).
@@ -288,8 +298,8 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 The text detector (CRAFT) runs on a Snapdragon's Adreno GPU when there is one and "Read text on
 the GPU" is on (`Settings.gpuText`, default on). Looking for it loads Qualcomm's libraries, so
 it is looked for only when wanted: by describing, or by the Settings screen, which shows where it
-stands (`AiEngine.Gpu`: none here, found, or failed its check this run) and greys the toggle
-out where there is none.
+stands (`AiEngine.Gpu`: none here, found, failed its check, or failed while reading this run)
+and greys the toggle out where there is none.
 
 - **How**: Qualcomm's QNN execution provider, a plugin to ONNX Runtime
   (`com.qualcomm.qti:onnxruntime-android-qnn` + `qnn-runtime`), registered once by
@@ -318,15 +328,19 @@ out where there is none.
   (`setSymbolicDimensionValue`), compiled in about 3 s. A canvas is cut for the GPU to
   `acceleratedMaxTilePixels`, every tile one size (`EasyOcr.windows`: edge tiles reach further
   in, which only adds context), so one session serves a whole canvas; cut the CPU's way, edge and
-  middle tiles differ and would each need one. The GPU takes the canvas when that tile is 0.6 MP
+  middle tiles differ and would each need one. Its layout is the one computing the fewest
+  pixels counted that way (a 2560×1920 canvas at 2.7 MP: 2×2 tiles of 1536×1216, 7.5 MP, not
+  three strips of 1344×1920, 7.7 MP in sessions 40% larger). The GPU takes the canvas when that tile is 0.6 MP
   or more (where compiling pays for itself on one image), or 0.2 MP once the shape has been
   seen before (a camera's photos, a phone's screenshots share one); otherwise the CPU runs it, cut
   to its own budget. Sessions of recent shapes stay open while their pixels add up to
   `acceleratedCachePixels`, the least recently used closed before another compiles, since each
-  holds its activations while open. Both budgets are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
+  holds its activations while open. The check against the CPU is noted only once it has
+  answered, so one that throws is asked again, the GPU unused meanwhile. Both budgets are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
   (a screenshot whole, as on the CPU), 1.6 MP on 8 GB ones, 0.8 MP below. The CPU then sees only
   small canvases, so its session stays small too. `CraftTilingTest.acceleratorTilesComputeTheSameScores`:
-  the GPU's way, run with the float32 graph, gives the whole canvas's score maps exactly.
+  the GPU's way, run with the float32 graph, gives the whole canvas's score maps exactly, one
+  session compiled per canvas.
 - **Checked, and dropped on failure**: once a process, `acceleratorAgrees` runs a made-up input
   on both, within 0.01 (scores run from 0 to 1, EasyOCR's thresholds are 0.4 and 0.7; float16
   moves them by about 0.001, a driver computing a graph wrongly, as Adreno does BLIP's encoder,

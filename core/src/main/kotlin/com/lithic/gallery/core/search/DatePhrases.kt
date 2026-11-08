@@ -40,9 +40,10 @@ class DatePhrases(
 ) {
     /**
      * A query with its date phrase taken out: [text] is what is left to search for as words
-     * (empty when the query was only a date).
+     * (empty when the query was only a date), [videosOnly] when it asked for videos ("videos from
+     * last summer").
      */
-    data class DateQuery(val text: String, val filter: DateFilter)
+    data class DateQuery(val text: String, val filter: DateFilter, val videosOnly: Boolean = false)
 
     /** The days from [from] to [until], [until] excluded. */
     data class Span(val from: LocalDate, val until: LocalDate) {
@@ -77,16 +78,19 @@ class DatePhrases(
 
     /** [query] with its date phrase taken out, or null when it has none. */
     fun parse(query: String): DateQuery? {
-        val q = " " + normalize(query) + " "
+        val q = " " + QueryRequest.normalize(query) + " "
         for (rule in RULES) for (m in rule.regex.findAll(q)) {
-            // "photos from christmas 2022": the words leading into the phrase go with it, and
-            // words that only ask for pictures ("show me photos of") are not searched for.
-            val before = words(q.substring(0, m.range.first)).dropLastWhile { it in LEAD_IN }
-            val rest = withoutRequest(before + words(q.substring(m.range.last + 1)))
+            // "show me photos of dogs from last summer": the request the query opens with is not
+            // searched for (read before "from" is taken: it ends "photos from"), and the words
+            // leading into the phrase go with it.
+            val ahead = QueryRequest.words(q.substring(0, m.range.first))
+            val behind = QueryRequest.words(q.substring(m.range.last + 1))
+            val request = QueryRequest.read(ahead + behind, nounAlone = true)
+            val rest = ahead.drop(request.length).dropLastWhile { it in LEAD_IN } + behind.drop(maxOf(0, request.length - ahead.size))
             val text = if (rest.all { it in FILLER }) "" else rest.joinToString(" ")
             if (rule.alone && text.isNotEmpty()) continue
             val filter = rule.make(this, m.groupValues) ?: continue
-            return DateQuery(text, filter)
+            return DateQuery(text, filter, request.videosOnly)
         }
         return null
     }
@@ -474,46 +478,9 @@ class DatePhrases(
         /** Words that lead into a date ("taken in 2023", "from last summer"): they go with it. */
         private val LEAD_IN = setOf("in", "on", "from", "during", "at", "around", "taken", "shot", "of")
 
-        /** Words that, left on their own, are nothing to search for: "photos from last summer". */
-        private val FILLER = LEAD_IN + setOf("photo", "photos", "picture", "pictures", "pic", "pics", "image", "images",
-            "shots", "my", "me", "the", "all", "show", "find")
+        /** Words that, left on their own, are nothing to search for: "pictures of me from last summer". */
+        private val FILLER = LEAD_IN + QueryRequest.PICTURE_WORDS + QueryRequest.VERBS + QueryRequest.DETERMINERS + "me"
 
-        private fun normalize(s: String): String = s.lowercase(Locale.ROOT)
-            .replace('’', '\'').replace('‘', '\'').replace('`', '\'').replace('–', '-').replace('—', '-')
-            .replace(Regex("[,;!?()\"]"), " ")
-            .replace(Regex("\\.(?= |$)"), " ")
-            .replace(Regex("\\s+"), " ").trim()
-
-        private fun words(s: String): List<String> = s.split(' ').filter { it.isNotEmpty() }
-
-        /**
-         * [words] without the request they open with, if any: "show me photos of dogs" is a
-         * search for dogs. A request is a verb ("show me", "find") or a word for pictures
-         * followed by "of", "from", "with"... ("photos of"), with "all", "my", "the" between;
-         * a word for pictures alone stays ("photo booth"). Videos are not asked for so: the word
-         * says which kind.
-         */
-        private fun withoutRequest(words: List<String>): List<String> {
-            var i = 0
-            val verb = words.getOrNull(0) in REQUEST_VERBS
-            if (verb) {
-                i++
-                if (words.getOrNull(i) == "me") i++
-            }
-            while (words.getOrNull(i) in DETERMINERS) i++
-            if (words.getOrNull(i) !in PICTURE_WORDS) return if (verb) words.drop(i) else words
-            i++
-            val preposition = words.getOrNull(i) in REQUEST_PREPOSITIONS
-            if (preposition) i++
-            if (!verb && !preposition) return words
-            while (words.getOrNull(i) in DETERMINERS) i++
-            return words.drop(i)
-        }
-
-        private val REQUEST_VERBS = setOf("show", "find")
-        private val DETERMINERS = setOf("all", "my", "the", "a", "an", "any", "some")
-        private val PICTURE_WORDS = setOf("photo", "photos", "picture", "pictures", "pic", "pics", "image", "images", "shots")
-        private val REQUEST_PREPOSITIONS = setOf("of", "from", "with", "showing", "taken", "in", "on", "at")
 
         /**
          * Phrases read as they are meant where [locale] is set: which hemisphere's seasons, the

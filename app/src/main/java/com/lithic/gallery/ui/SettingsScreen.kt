@@ -114,14 +114,15 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
             )) {
                 Choice(label, about, s.textDetail == detail) { set { it.copy(textDetail = detail) } }
             }
-            val gpuHere = gpu == AiEngine.Gpu.FOUND || gpu == AiEngine.Gpu.FAILED
+            val gpuHere = gpu == AiEngine.Gpu.FOUND || gpu == AiEngine.Gpu.DIFFERS || gpu == AiEngine.Gpu.FAILED
             Toggle("Read text on the GPU",
                 when (gpu) {
                     AiEngine.Gpu.UNKNOWN -> "Looking for the GPU…"
                     AiEngine.Gpu.NONE -> "This phone has no GPU the text reader runs on: it uses the processor"
                     AiEngine.Gpu.FOUND -> "This phone's Snapdragon GPU finds text about five times as fast. In half " +
                         "precision: now and then a word reads differently from thumbsup2's"
-                    AiEngine.Gpu.FAILED -> "This phone's GPU failed its check, so the processor reads text until the app restarts"
+                    AiEngine.Gpu.DIFFERS -> "This phone's GPU failed its check, so the processor reads text until the app restarts"
+                    AiEngine.Gpu.FAILED -> "This phone's GPU failed while reading text, so the processor reads it until the app restarts"
                 },
                 s.gpuText && gpuHere, enabled = gpuHere) { v -> set { it.copy(gpuText = v) } }
             SliderRow("Processor threads", if (s.aiThreads == 0) "automatic" else "${s.aiThreads}",

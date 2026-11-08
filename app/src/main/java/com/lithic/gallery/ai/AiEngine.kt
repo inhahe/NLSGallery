@@ -52,7 +52,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         NONE,
         /** There is one: used, unless it fails its check. */
         FOUND,
-        /** It computed the detector differently from the CPU, or failed: the CPU reads text until the app restarts. */
+        /** It failed its check (computed the detector differently from the CPU): the CPU reads text until the app restarts. */
+        DIFFERS,
+        /** It failed while reading text: the CPU reads text until the app restarts. */
         FAILED,
     }
 
@@ -64,9 +66,12 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /** Looks for the GPU, loading its libraries the first time: call it off the main thread. */
     fun lookForGpu() {
-        val found = SnapdragonGpu.accelerator(ai.onnxruntime.OrtEnvironment.getEnvironment()) != null
-        _gpu.compareAndSet(Gpu.UNKNOWN, if (found) Gpu.FOUND else Gpu.NONE)
+        probeGpu(ai.onnxruntime.OrtEnvironment.getEnvironment())
     }
+
+    /** The GPU for sessions in [env], or null; what is found is noted in [gpu] the first time. */
+    private fun probeGpu(env: ai.onnxruntime.OrtEnvironment): com.lithic.gallery.core.ai.Accelerator? =
+        SnapdragonGpu.accelerator(env).also { _gpu.compareAndSet(Gpu.UNKNOWN, if (it != null) Gpu.FOUND else Gpu.NONE) }
 
     /** Whether the models for these settings are downloaded. */
     fun ready(s: Settings): Boolean =
@@ -371,22 +376,27 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /** Hands [ocr]'s text detector to the GPU, if there is one and it computes it right. */
     private fun useGpu(ocr: EasyOcr, onnx: Onnx) {
-        if (_gpu.value == Gpu.FAILED) return
-        val gpu = SnapdragonGpu.accelerator(onnx.env)
-        _gpu.compareAndSet(Gpu.UNKNOWN, if (gpu != null) Gpu.FOUND else Gpu.NONE)
-        if (gpu == null) return
+        if (_gpu.value == Gpu.DIFFERS || _gpu.value == Gpu.FAILED) return
+        val gpu = probeGpu(onnx.env) ?: return
         ocr.acceleratedCachePixels = gpuPixels(totalMemory())
         ocr.acceleratedMaxTilePixels = ocr.acceleratedCachePixels
         ocr.accelerator = gpu
         if (!gpuChecked) {
-            gpuChecked = true
-            if (!ocr.acceleratorAgrees()) {
-                Log.w(TAG, "the GPU failed its check (computed the text detector differently from the CPU, or failed): text is read on the CPU")
-                _gpu.value = Gpu.FAILED
+            // Noted only once answered: a check that throws (the CPU short of memory, say) is
+            // asked again next time, and the GPU is not used meanwhile.
+            val agrees = try {
+                ocr.acceleratorAgrees()
+            } finally {
                 ocr.accelerator = null
+            }
+            gpuChecked = true
+            if (!agrees) {
+                Log.w(TAG, "the GPU failed its check (computed the text detector differently from the CPU, or could not run it): text is read on the CPU")
+                _gpu.value = Gpu.DIFFERS
                 return
             }
             Log.i(TAG, "the GPU computes the text detector as the CPU does")
+            ocr.accelerator = gpu
         }
         ocr.onAcceleratorFailed = { e ->
             Log.w(TAG, "the GPU failed; text is read on the CPU until the app restarts", e)

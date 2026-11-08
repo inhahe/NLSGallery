@@ -11,6 +11,7 @@ import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
 import com.lithic.gallery.core.search.DatePhrases
 import com.lithic.gallery.core.search.HybridSearch
+import com.lithic.gallery.core.search.QueryRequest
 import com.lithic.gallery.data.Categories
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
@@ -28,7 +29,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -104,26 +104,42 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * The query whose date phrase is searched for as words (the user dismissed the date read in
-     * it), until the query changes.
+     * it), until the settled query changes.
      */
     private val dateDismissed = MutableStateFlow<String?>(null)
 
-    /** Today, moving on at midnight, so "today" or "this week" in an open search moves with it. */
-    private val today: StateFlow<LocalDate> = flow {
-        while (true) {
-            val now = LocalDate.now()
-            emit(now)
-            val midnight = now.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            delay(maxOf(1_000L, midnight - System.currentTimeMillis()))
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, LocalDate.now())
+    /** The query once it has settled for a moment: what is read and searched. */
+    private val settledQuery: StateFlow<String> = query.debounce(250).stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    /** The query (settled for a moment) and the date read in it, unless dismissed. */
-    private val parsedQuery: StateFlow<ParsedQuery> = combine(query.debounce(250), dateDismissed, today) { q, dismissed, day ->
-        ParsedQuery(q, if (q.isBlank() || q == dismissed) null else DatePhrases.forLocale(day, Locale.getDefault()).parse(q))
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, ParsedQuery("", null))
+    /**
+     * Today, moved on at midnight and when the app comes back (a sleeping phone's timers run
+     * late), so relative dates in an open search are read again. A query is read on the clock's
+     * day itself; this only says when to read it again.
+     */
+    private val today = MutableStateFlow(LocalDate.now())
 
-    private data class ParsedQuery(val text: String, val date: DatePhrases.DateQuery?)
+    /** The settled query as read: its date unless dismissed, and its request ("show me videos of"). */
+    private val parsedQuery: StateFlow<ParsedQuery> =
+        combine(settledQuery, dateDismissed, today) { q, dismissed, day -> Triple(q, q.isNotBlank() && q == dismissed, day) }
+            .distinctUntilChanged()
+            .map { (q, dismissed, _) -> read(q, dismissed) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, ParsedQuery("", null, "", false))
+
+    /** What [q] asks for: the date read in it (none when [dateDismissed]), the words to search for, the kind. */
+    private fun read(q: String, dateDismissed: Boolean): ParsedQuery {
+        if (q.isBlank()) return ParsedQuery(q, null, "", false)
+        val date = if (dateDismissed) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q)
+        if (date != null) return ParsedQuery(q, date, date.text, date.videosOnly)
+        val stripped = QueryRequest.strip(q)
+        return ParsedQuery(q, null, stripped.text, stripped.videosOnly)
+    }
+
+    /**
+     * A query as read: [text] as typed, the [date] read in it, the [words] to search for (the
+     * query itself unless a date or a request was taken out), [videosOnly] when it asks for videos.
+     */
+    private data class ParsedQuery(val text: String, val date: DatePhrases.DateQuery?, val words: String, val videosOnly: Boolean)
 
     /** Searches for the words of the date phrase shown instead (the × on its chip). */
     fun dismissDate() {
@@ -131,8 +147,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     init {
-        // A dismissal lasts until the query changes.
-        viewModelScope.launch { query.collect { q -> if (q != dateDismissed.value) dateDismissed.value = null } }
+        // A dismissal lasts until the settled query changes.
+        viewModelScope.launch { settledQuery.collect { q -> if (q != dateDismissed.value) dateDismissed.value = null } }
+        viewModelScope.launch {
+            while (true) {
+                val midnight = LocalDate.now().plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                delay(maxOf(1_000L, midnight - System.currentTimeMillis()))
+                today.value = LocalDate.now()
+            }
+        }
     }
 
     /** The date read in the query, for the user to check and dismiss; null when none is. */
@@ -145,8 +168,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      * Results for [query] (null when not searching), best first. A change to the files (added,
      * removed, renamed, moved) invalidates the index here, before the search it reruns.
      *
-     * A date in the query narrows the search to the files taken then; a date alone lists them all,
-     * newest first, which needs no descriptions. "Only in this tab" narrows it the same way.
+     * A date in the query narrows the search to the files taken then, "videos" to videos, "Only
+     * in this tab" to the tab. With no words left to search for ("last summer", "show me
+     * videos"), every file allowed is listed, newest first, which needs no descriptions.
      */
     val searchResults: StateFlow<List<SearchHit>?> =
         combine(parsedQuery, settings, category, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, c, all, _ ->
@@ -157,17 +181,20 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val s = input.settings
             val zone = ZoneId.systemDefault()
             val dates = q.date?.filter
-            // The files the search may find, worked out once (the search asks per candidate,
-            // holding its index's lock); null for all.
-            val allowed: List<MediaEntity>? = if (!s.searchCurrentTabOnly && dates == null) null else input.all.filter { item ->
-                (!s.searchCurrentTabOnly || Categories.shows(input.category, item.folderCategory, item.isVideo, s.videosInFolderTabs)) &&
+            // "Only in this tab" narrows nothing in the All tab.
+            val tab = input.category.takeIf { s.searchCurrentTabOnly && it != Category.ALL }
+            // The files the search may find, worked out once: the search asks per candidate,
+            // holding its index's lock. It also keeps out files the index has and this list has
+            // not yet (or no longer).
+            val allowed = input.all.filter { item ->
+                (tab == null || Categories.shows(tab, item.folderCategory, item.isVideo, s.videosInFolderTabs)) &&
+                    (!q.videosOnly || item.isVideo) &&
                     (dates == null || dates.matches(Instant.ofEpochMilli(item.sortDate).atZone(zone).toLocalDate()))
             }
-            if (q.date != null && q.date.text.isEmpty()) return@mapLatest allowed!!.map { SearchHit(it, null) }
-            val byId = input.all.associateBy { it.id }
+            if (q.words.isBlank()) return@mapLatest allowed.map { SearchHit(it, null) }
+            val byId = allowed.associateBy { it.id }
             val fields = HybridSearch.FIELDS.filter { it in s.searchFields }
-            val ids = allowed?.mapTo(HashSet()) { it.id }
-            app.search.search(q.date?.text ?: q.text, fields, ids?.let { a -> { id: Long -> id in a } })
+            app.search.search(q.words, fields) { id -> id in byId }
                 .mapNotNull { r -> byId[r.mediaId]?.let { SearchHit(it, r) } }
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -274,6 +301,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      * waiting, as on opening.
      */
     fun onResume() {
+        today.value = LocalDate.now()
         if (!started) return
         viewModelScope.launch {
             app.models.verifyCopied()

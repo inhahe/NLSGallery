@@ -55,7 +55,20 @@ class CraftTilingTest {
             val uniformTile = EasyOcr.windows(xs, w, margin, true).first().let { it.second - it.first }.toLong() *
                 EasyOcr.windows(ys, h, margin, true).first().let { it.second - it.first }
             assertWithMessage("${w}x$h uniform tile").that(uniformTile).isEqualTo(largest)
+            // Planned for the accelerator, the work counted is what its tiles compute.
+            val gpuWork = { (gx, gy): Pair<List<Pair<Int, Int>>, List<Pair<Int, Int>>> ->
+                val xw = EasyOcr.windows(gx, w, margin, true)
+                val yw = EasyOcr.windows(gy, h, margin, true)
+                xw.size.toLong() * (xw[0].second - xw[0].first) * yw.size * (yw[0].second - yw[0].first)
+            }
+            val forGpu = EasyOcr.tilePlan(w, h, budget, margin, uniform = true)
+            println("    for an accelerator: ${forGpu.first.size}x${forGpu.second.size} tiles, " +
+                "computing ${"%.2f".format(gpuWork(forGpu).toDouble() / (w.toLong() * h))}× the pixels")
+            assertThat(gpuWork(forGpu)).isAtMost(gpuWork(xs to ys))
         }
+        // The case it was for: 3 strips of 1344×1920 (7.7 MP), where 2×2 tiles compute 7.5 MP.
+        val strips = EasyOcr.tilePlan(2560, 1920, 2_700_000L, margin, uniform = true)
+        assertThat(strips.first.size to strips.second.size).isEqualTo(2 to 2)
     }
 
     /**
@@ -77,7 +90,10 @@ class CraftTilingTest {
                 ocr.acceleratedMaxTilePixels = Long.MAX_VALUE
                 val whole = ocr.scoreMaps(img)
                 ocr.acceleratedMaxTilePixels = (whole.width * 2L) * (whole.height * 2L) * 6 / 10
+                val compiled = ocr.acceleratedCompiles
                 val b = ocr.scoreMaps(img)
+                // One session serves the canvas: its tiles are all one shape.
+                assertWithMessage("$name sessions compiled").that(ocr.acceleratedCompiles - compiled).isAtMost(1)
                 for (i in whole.text.indices) {
                     maxDiff = maxOf(maxDiff, Math.abs(whole.text[i] - b.text[i]), Math.abs(whole.link[i] - b.link[i]))
                 }

@@ -179,7 +179,7 @@ fun GalleryScreen(
         } else {
             val list = remember(hits) { hits.map { it.item } }
             if (list.isEmpty()) {
-                NoResults(query, searchDate, category.takeIf { settings.searchCurrentTabOnly }, ai, Modifier.padding(top = headerDp))
+                NoResults(query, searchDate, category.takeIf { settings.searchCurrentTabOnly && it != Category.ALL }, ai, Modifier.padding(top = headerDp))
             } else {
                 val semantic = remember(hits) { hits.filter { it.result?.semanticOnly == true }.map { it.item.id }.toSet() }
                 ThumbnailGrid(
@@ -444,6 +444,7 @@ private fun NoResults(query: String, date: DatePhrases.DateQuery?, tabOnly: Cate
             when {
                 date == null -> "Nothing matches “$query”."
                 // The chip above says when.
+                date.text.isEmpty() && date.videosOnly -> "No videos${tabOnly?.let { " in ${it.label()}" } ?: ""} were taken then."
                 date.text.isEmpty() && tabOnly != null -> "Nothing in ${tabOnly.label()} was taken then."
                 date.text.isEmpty() -> "No photos or videos were taken then."
                 else -> "Nothing taken then matches “${date.text}”."

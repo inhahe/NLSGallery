@@ -271,6 +271,16 @@ class DatePhrasesTest {
         assertSpan("my pictures from last summer", summer)
         assertSpan("photo booth last summer", summer, "photo booth")
         assertSpan("get together last summer", summer, "get together")
+        assertSpan("find the photo booth last summer", summer, "photo booth")
+        assertSpan("some photos from last summer", summer)
+        assertEveryYear("a picture from christmas", listOf(d(2020, 12, 25)), emptyList())
+        assertEveryYear("a photo of christmas", listOf(d(2020, 12, 25)), emptyList())
+        // Videos asked for are a kind, not words to search for.
+        assertThat(us.parse("videos from last summer")).isEqualTo(DatePhrases.DateQuery("", us.parse("last summer")!!.filter, videosOnly = true))
+        assertThat(us.parse("videos last summer")!!.videosOnly).isTrue()
+        assertThat(us.parse("show me videos of dogs from last summer")!!.let { it.text to it.videosOnly }).isEqualTo("dogs" to true)
+        assertThat(us.parse("photos from last summer")!!.videosOnly).isFalse()
+        assertThat(us.parse("video game 2023")!!.let { it.text to it.videosOnly }).isEqualTo("video game" to false)
         for (q in listOf("dog on a beach", "2 dogs", "iphone 12", "top 10", "", "receipt")) assertNoDate(q)
     }
 
