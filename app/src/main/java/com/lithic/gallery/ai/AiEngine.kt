@@ -54,7 +54,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         FOUND,
         /** It failed its check (computed the detector differently from the CPU): the CPU reads text until the app restarts. */
         DIFFERS,
-        /** It failed while reading text: the CPU reads text until the app restarts. */
+        /** It failed while reading text, or its check could not run three times: the CPU reads text until the app restarts. */
         FAILED,
     }
 
@@ -63,6 +63,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /** Whether the GPU has been checked against the CPU this process (once: compiling a check takes seconds). */
     private var gpuChecked = false
+
+    /** Times the check could not run this process. */
+    private var gpuCheckFailures = 0
 
     /** Looks for the GPU, loading its libraries the first time: call it off the main thread. */
     fun lookForGpu() {
@@ -378,26 +381,29 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     private fun useGpu(ocr: EasyOcr, onnx: Onnx) {
         if (_gpu.value == Gpu.DIFFERS || _gpu.value == Gpu.FAILED) return
         val gpu = probeGpu(onnx.env) ?: return
-        ocr.acceleratedCachePixels = gpuPixels(totalMemory())
-        ocr.acceleratedMaxTilePixels = ocr.acceleratedCachePixels
-        ocr.accelerator = gpu
         if (!gpuChecked) {
-            // Noted only once answered: a check that throws (the CPU short of memory, say) is
-            // asked again next time, and the GPU is not used meanwhile.
+            // Noted only once answered. A check that cannot run (short of memory a moment, say)
+            // leaves the CPU reading text this time and is tried again with the models' next
+            // opening; failing so three times, the GPU is given up for the run.
             val agrees = try {
-                ocr.acceleratorAgrees()
-            } finally {
-                ocr.accelerator = null
+                ocr.acceleratorAgrees(gpu)
+            } catch (e: Exception) {
+                gpuCheckFailures++
+                Log.w(TAG, "the GPU check could not run ($gpuCheckFailures): text is read on the CPU for now", e)
+                if (gpuCheckFailures >= 3) _gpu.value = Gpu.FAILED
+                return
             }
             gpuChecked = true
             if (!agrees) {
-                Log.w(TAG, "the GPU failed its check (computed the text detector differently from the CPU, or could not run it): text is read on the CPU")
+                Log.w(TAG, "the GPU computes the text detector differently from the CPU: text is read on the CPU")
                 _gpu.value = Gpu.DIFFERS
                 return
             }
             Log.i(TAG, "the GPU computes the text detector as the CPU does")
-            ocr.accelerator = gpu
         }
+        ocr.acceleratedCachePixels = gpuPixels(totalMemory())
+        ocr.acceleratedMaxTilePixels = ocr.acceleratedCachePixels
+        ocr.accelerator = gpu
         ocr.onAcceleratorFailed = { e ->
             Log.w(TAG, "the GPU failed; text is read on the CPU until the app restarts", e)
             _gpu.value = Gpu.FAILED

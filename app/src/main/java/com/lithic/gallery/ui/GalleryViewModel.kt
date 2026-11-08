@@ -44,6 +44,13 @@ import java.util.Locale
 /** A search result shown in the grid: how it was found, or no [result] when it was listed for its date alone. */
 data class SearchHit(val item: MediaEntity, val result: SearchService.Result?)
 
+/**
+ * A search query as read: [text] as typed, the [date] read in it, the [words] to search for (the
+ * query itself unless a date or a request was taken out; empty when nothing is left, and every
+ * file allowed is listed), [videosOnly] when it asks for videos.
+ */
+data class SearchReading(val text: String, val date: DatePhrases.DateQuery?, val words: String, val videosOnly: Boolean)
+
 /** What the AI button shows. */
 data class AiStatus(
     /** Describing can run: captions or text reading is on, and the models for them are here. */
@@ -119,32 +126,35 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val today = MutableStateFlow(LocalDate.now())
 
     /** The settled query as read: its date unless dismissed, and its request ("show me videos of"). */
-    private val parsedQuery: StateFlow<ParsedQuery> =
+    val reading: StateFlow<SearchReading> =
         combine(settledQuery, dateDismissed, today) { q, dismissed, day -> Triple(q, q.isNotBlank() && q == dismissed, day) }
             .distinctUntilChanged()
             .map { (q, dismissed, _) -> read(q, dismissed) }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, ParsedQuery("", null, "", false))
+            .stateIn(viewModelScope, SharingStarted.Eagerly, SearchReading("", null, "", false))
 
-    /** What [q] asks for: the date read in it (none when [dateDismissed]), the words to search for, the kind. */
-    private fun read(q: String, dateDismissed: Boolean): ParsedQuery {
-        if (q.isBlank()) return ParsedQuery(q, null, "", false)
-        val date = if (dateDismissed) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q)
-        if (date != null) return ParsedQuery(q, date, date.text, date.videosOnly)
+    /** What [q] asks for: the date read in it (none when [dismissed]), the words to search for, the kind. */
+    private fun read(q: String, dismissed: Boolean): SearchReading {
+        if (q.isBlank()) return SearchReading(q, null, "", false)
+        val date = if (dismissed) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q)
+        if (date != null) return SearchReading(q, date, date.text, date.videosOnly)
         val stripped = QueryRequest.strip(q)
-        return ParsedQuery(q, null, stripped.text, stripped.videosOnly)
+        return SearchReading(q, null, stripped.text, stripped.videosOnly)
     }
 
     /**
-     * A query as read: [text] as typed, the [date] read in it, the [words] to search for (the
-     * query itself unless a date or a request was taken out), [videosOnly] when it asks for videos.
+     * Searches for the words of the date phrase shown instead (the × on its chip); not when the
+     * chip shown is of a query typed over since (its own will show).
      */
-    private data class ParsedQuery(val text: String, val date: DatePhrases.DateQuery?, val words: String, val videosOnly: Boolean)
-
-    /** Searches for the words of the date phrase shown instead (the × on its chip). */
     fun dismissDate() {
-        dateDismissed.value = parsedQuery.value.text
+        val shown = reading.value.text
+        if (shown == settledQuery.value) dateDismissed.value = shown
     }
+
+    /** The tab a search is kept to: the one shown, with "Only in this tab" on, unless it is All. */
+    val searchScope: StateFlow<Category?> = combine(settings, category) { s, c ->
+        c.takeIf { s.searchCurrentTabOnly && it != Category.ALL }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     init {
         // A dismissal lasts until the settled query changes.
@@ -159,7 +169,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** The date read in the query, for the user to check and dismiss; null when none is. */
-    val searchDate: StateFlow<DatePhrases.DateQuery?> = parsedQuery.map { it.date }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val searchDate: StateFlow<DatePhrases.DateQuery?> = reading.map { it.date }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Bumps when files or descriptions change, so open results are recomputed. */
     private val indexVersion = MutableStateFlow(0)
@@ -173,16 +183,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      * videos"), every file allowed is listed, newest first, which needs no descriptions.
      */
     val searchResults: StateFlow<List<SearchHit>?> =
-        combine(parsedQuery, settings, category, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, c, all, _ ->
-            SearchInput(q, s, c, all)
+        combine(reading, settings, searchScope, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, tab, all, _ ->
+            SearchInput(q, s, tab, all)
         }.mapLatest { input ->
             val q = input.query
             if (q.text.isBlank()) return@mapLatest null
             val s = input.settings
             val zone = ZoneId.systemDefault()
             val dates = q.date?.filter
-            // "Only in this tab" narrows nothing in the All tab.
-            val tab = input.category.takeIf { s.searchCurrentTabOnly && it != Category.ALL }
+            val tab = input.tab
             // The files the search may find, worked out once: the search asks per candidate,
             // holding its index's lock. It also keeps out files the index has and this list has
             // not yet (or no longer).
@@ -198,7 +207,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 .mapNotNull { r -> byId[r.mediaId]?.let { SearchHit(it, r) } }
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private data class SearchInput(val query: ParsedQuery, val settings: Settings, val category: Category, val all: List<MediaEntity>)
+    private data class SearchInput(val query: SearchReading, val settings: Settings, val tab: Category?, val all: List<MediaEntity>)
 
     val aiStatus: StateFlow<AiStatus> = combine(
         settings.flatMapLatest { s -> app.db.ai().observeUndescribedCount(s.describeVideos, s.captions, s.ocr) },

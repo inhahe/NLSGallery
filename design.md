@@ -81,8 +81,11 @@ Deliberate differences from thumbsup2:
   weigh words by the whole index. thumbsup2 has neither dates in queries nor tabs.
 - **A request a query opens with is not searched for** (`QueryRequest`): "show me photos of
   dogs" searches for "dogs", where thumbsup2 would ask every document for all five words (its
-  keyword search wants them all); "videos of dogs" searches for dogs among videos. A query that
-  makes no request ("photo booth", "videos") is searched as typed, as thumbsup2 does.
+  keyword search wants them all); "videos of dogs" and "dog videos" search for dogs among
+  videos. A query that makes no request ("photo booth", "videos", "find my") is searched as
+  typed, as thumbsup2 does. Asking for videos narrows a search, so it is read only from words
+  that cannot mean anything else ("videos of", "from", "taken", "showing", or "videos" ending
+  the query): "video on youtube" and "clip on earrings" are searched as typed.
 - **Keyword scores use a field's exact mean length**, not MiniSearch's running average, whose
   last bits depend on the order documents were added and removed in: the app's index changes
   file by file, and must score the same as one built afresh. Scores agree with thumbsup2's to
@@ -335,8 +338,7 @@ and greys the toggle out where there is none.
   seen before (a camera's photos, a phone's screenshots share one); otherwise the CPU runs it, cut
   to its own budget. Sessions of recent shapes stay open while their pixels add up to
   `acceleratedCachePixels`, the least recently used closed before another compiles, since each
-  holds its activations while open. The check against the CPU is noted only once it has
-  answered, so one that throws is asked again, the GPU unused meanwhile. Both budgets are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
+  holds its activations while open. Both budgets are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
   (a screenshot whole, as on the CPU), 1.6 MP on 8 GB ones, 0.8 MP below. The CPU then sees only
   small canvases, so its session stays small too. `CraftTilingTest.acceleratorTilesComputeTheSameScores`:
   the GPU's way, run with the float32 graph, gives the whole canvas's score maps exactly, one
@@ -344,8 +346,11 @@ and greys the toggle out where there is none.
 - **Checked, and dropped on failure**: once a process, `acceleratorAgrees` runs a made-up input
   on both, within 0.01 (scores run from 0 to 1, EasyOCR's thresholds are 0.4 and 0.7; float16
   moves them by about 0.001, a driver computing a graph wrongly, as Adreno does BLIP's encoder,
-  by the order of the scores). An exception on the GPU drops it for the rest of the process and
-  the CPU takes over the same input.
+  by the order of the scores); one computing differently is not used for the rest of the
+  process (`AiEngine.Gpu.DIFFERS`). The check is noted only once answered: one that cannot run
+  (short of memory a moment, say) leaves the CPU reading text and is tried again at the models'
+  next opening, three such failures giving the GPU up for the run. An exception on the GPU while
+  reading drops it for the rest of the process and the CPU takes over the same input.
 - **Not on the GPU**: BLIP's vision encoder computes wrongly there (largest difference 10 on
   outputs up to 8) and slower (3.8 s against 1.2 s). The recognizer and MiniLM have inputs of
   varying length, so a session per length, for models that take milliseconds. QNN's EP context

@@ -83,7 +83,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.lithic.gallery.core.search.DatePhrases
 import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.LayoutMode
@@ -133,6 +132,8 @@ fun GalleryScreen(
     val query by vm.query.collectAsState()
     val results by vm.searchResults.collectAsState()
     val searchDate by vm.searchDate.collectAsState()
+    val reading by vm.reading.collectAsState()
+    val scope by vm.searchScope.collectAsState()
     val ai by vm.aiStatus.collectAsState()
     val all by vm.allMedia.collectAsState()
     val aspectFixes by vm.aspectFixes.collectAsState()
@@ -179,7 +180,7 @@ fun GalleryScreen(
         } else {
             val list = remember(hits) { hits.map { it.item } }
             if (list.isEmpty()) {
-                NoResults(query, searchDate, category.takeIf { settings.searchCurrentTabOnly && it != Category.ALL }, ai, Modifier.padding(top = headerDp))
+                NoResults(reading, scope, ai, Modifier.padding(top = headerDp))
             } else {
                 val semantic = remember(hits) { hits.filter { it.result?.semanticOnly == true }.map { it.item.id }.toSet() }
                 ThumbnailGrid(
@@ -223,7 +224,7 @@ fun GalleryScreen(
             if (hits != null) {
                 searchDate?.let { date -> DateChip(date.filter.label, onDismiss = vm::dismissDate) }
                 SearchChips(
-                    words = searchDate?.text?.isEmpty() != true,
+                    words = reading.words.isNotEmpty(),
                     fields = settings.searchFields,
                     onToggle = { f ->
                         vm.updateSettings { s ->
@@ -384,7 +385,10 @@ private fun SearchChips(
             if (words) for (f in HybridSearch.FIELDS) {
                 FilterChip(selected = f in fields, onClick = { onToggle(f) }, label = { Text(FIELD_LABELS.getValue(f), fontSize = 12.sp) })
             }
-            FilterChip(selected = tabOnly, onClick = onTabOnly, label = { Text("Only in ${category.label()}", fontSize = 12.sp) })
+            // In the All tab there is nothing to keep a search to.
+            if (category != Category.ALL) {
+                FilterChip(selected = tabOnly, onClick = onTabOnly, label = { Text("Only in ${category.label()}", fontSize = 12.sp) })
+            }
         }
         Text(
             if (count == 1) "1 match" else "$count matches",
@@ -438,21 +442,14 @@ private fun EmptyTab(category: Category, libraryEmpty: Boolean, modifier: Modifi
 }
 
 @Composable
-private fun NoResults(query: String, date: DatePhrases.DateQuery?, tabOnly: Category?, ai: AiStatus, modifier: Modifier) {
+private fun NoResults(r: SearchReading, tab: Category?, ai: AiStatus, modifier: Modifier) {
     Column(modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text(
-            when {
-                date == null -> "Nothing matches “$query”."
-                // The chip above says when.
-                date.text.isEmpty() && date.videosOnly -> "No videos${tabOnly?.let { " in ${it.label()}" } ?: ""} were taken then."
-                date.text.isEmpty() && tabOnly != null -> "Nothing in ${tabOnly.label()} was taken then."
-                date.text.isEmpty() -> "No photos or videos were taken then."
-                else -> "Nothing taken then matches “${date.text}”."
-            },
+            noResults(r, tab),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        // Listed by date alone, describing has no part in it.
-        if (date != null && date.text.isEmpty()) return@Column
+        // A listing (no words searched for): describing has no part in it.
+        if (r.words.isEmpty()) return@Column
         if (ai.featuresOff) {
             Spacer(Modifier.height(8.dp))
             Text(
@@ -473,6 +470,20 @@ private fun NoResults(query: String, date: DatePhrases.DateQuery?, tabOnly: Cate
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
             )
         }
+    }
+}
+
+/** What an empty search says: what was looked for ([r]), where ([tab]: kept to it). */
+private fun noResults(r: SearchReading, tab: Category?): String {
+    val inTab = tab?.takeIf { !(r.videosOnly && it == Category.VIDEO) }?.let { " in ${it.label()}" } ?: ""
+    return when {
+        // The chip above says when.
+        r.words.isEmpty() && r.date != null -> if (r.videosOnly) "No videos$inTab were taken then."
+            else if (tab != null) "Nothing$inTab was taken then." else "No photos or videos were taken then."
+        r.words.isEmpty() -> if (r.videosOnly) "No videos$inTab." else "Nothing$inTab."
+        r.date != null -> if (r.videosOnly) "No videos taken then match “${r.words}”." else "Nothing taken then matches “${r.words}”."
+        r.videosOnly -> "No videos match “${r.words}”."
+        else -> "Nothing matches “${r.text}”."
     }
 }
 

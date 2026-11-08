@@ -86,11 +86,13 @@ class DatePhrases(
             val ahead = QueryRequest.words(q.substring(0, m.range.first))
             val behind = QueryRequest.words(q.substring(m.range.last + 1))
             val request = QueryRequest.read(ahead + behind, nounAlone = true)
-            val rest = ahead.drop(request.length).dropLastWhile { it in LEAD_IN } + behind.drop(maxOf(0, request.length - ahead.size))
+            // Words after it may open with their own ("last summer at the beach": the beach).
+            val after = behind.drop(maxOf(0, request.length - ahead.size)).dropWhile { it in LEAD_IN || it in QueryRequest.DETERMINERS }
+            val (rest, videos) = QueryRequest.trailingVideos(ahead.drop(request.length).dropLastWhile { it in LEAD_IN } + after)
             val text = if (rest.all { it in FILLER }) "" else rest.joinToString(" ")
             if (rule.alone && text.isNotEmpty()) continue
             val filter = rule.make(this, m.groupValues) ?: continue
-            return DateQuery(text, filter, request.videosOnly)
+            return DateQuery(text, filter, request.videosOnly || videos)
         }
         return null
     }

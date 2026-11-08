@@ -88,7 +88,7 @@ class EasyOcrTest {
         o.accelerator = com.lithic.gallery.core.ai.Accelerator { } // adds no provider: the CPU, shapes fixed
         o.acceleratedFrom = 0
         try {
-            assertWithMessage("the CPU agrees with itself").that(o.acceleratorAgrees()).isTrue()
+            assertWithMessage("the CPU agrees with itself").that(o.acceleratorAgrees(o.accelerator!!)).isTrue()
             text("ocr.json", EasyOcr.DEFAULT_CANVAS)
         } finally {
             o.accelerator = null

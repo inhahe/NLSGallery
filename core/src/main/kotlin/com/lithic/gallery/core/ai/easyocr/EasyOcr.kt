@@ -119,22 +119,18 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         }
 
     /**
-     * Whether the [accelerator] computes CRAFT as the CPU does, on a made-up 256×384 input: its
-     * largest difference within [tolerance]. Scores run from 0 to 1 (EasyOCR's thresholds are 0.4
-     * and 0.7); float16 alone moves them by about 0.001, a driver computing the graph wrongly by
-     * the order of the scores themselves.
+     * Whether [acc] computes CRAFT ([acceleratedGraph]) as the CPU does, on a made-up 256×384
+     * input: its largest difference within [tolerance]. Scores run from 0 to 1 (EasyOCR's
+     * thresholds are 0.4 and 0.7); float16 alone moves them by about 0.001, a driver computing the
+     * graph wrongly by the order of the scores themselves. Throws when either cannot run it (a
+     * failure that may pass, unlike an answer).
      */
-    fun acceleratorAgrees(tolerance: Float = 0.01f): Boolean {
-        val acc = accelerator ?: return false
+    fun acceleratorAgrees(acc: Accelerator, tolerance: Float = 0.01f): Boolean {
         val h = 256
         val w = 384
         val input = FloatArray(3 * h * w) { ((it * 2654435761L) % 1000).toFloat() / 500f - 1f }
         val cpu = run(craft, input, h, w)
-        val got = try {
-            onnx.session("craft", acceleratedGraph, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).use { run(it, input, h, w) }
-        } catch (e: Exception) {
-            return false
-        }
+        val got = onnx.session("craft", acceleratedGraph, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).use { run(it, input, h, w) }
         return got.size == cpu.size && got.indices.all { Math.abs(got[it] - cpu[it]) <= tolerance }
     }
 

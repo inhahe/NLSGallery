@@ -125,7 +125,7 @@ class OnDeviceModelTest {
             onGpu.acceleratedMaxTilePixels = onGpu.acceleratedCachePixels
             onGpu.accelerator = gpu
             onGpu.onAcceleratorFailed = { e -> throw AssertionError("the GPU failed", e) }
-            assertWithMessage("the GPU computes the detector as the CPU does").that(onGpu.acceleratorAgrees()).isTrue()
+            assertWithMessage("the GPU computes the detector as the CPU does").that(onGpu.acceleratorAgrees(gpu!!)).isTrue()
             for (name in names) {
                 val img = raw(name)
                 val t = System.nanoTime()

@@ -281,6 +281,11 @@ class DatePhrasesTest {
         assertThat(us.parse("show me videos of dogs from last summer")!!.let { it.text to it.videosOnly }).isEqualTo("dogs" to true)
         assertThat(us.parse("photos from last summer")!!.videosOnly).isFalse()
         assertThat(us.parse("video game 2023")!!.let { it.text to it.videosOnly }).isEqualTo("video game" to false)
+        assertThat(us.parse("beach videos last summer")!!.let { it.text to it.videosOnly }).isEqualTo("beach" to true)
+        assertThat(us.parse("show me videos from last summer of dogs")!!.let { it.text to it.videosOnly }).isEqualTo("dogs" to true)
+        assertThat(us.parse("christmas videos")!!.let { it.text to it.videosOnly }).isEqualTo("" to true)
+        // Words after the phrase lose what they open with too.
+        assertSpan("photos last summer at the beach", summer, "beach")
         for (q in listOf("dog on a beach", "2 dogs", "iphone 12", "top 10", "", "receipt")) assertNoDate(q)
     }
 
