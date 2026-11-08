@@ -45,6 +45,25 @@ class AiDaoTest {
         assertThat(dao.embedding("fine", "m")).isNotNull()
     }
 
+    private fun media(id: Long, key: String) = MediaEntity(
+        id, "content://media/$id", false, "IMG_$id.jpg", "DCIM/Camera/", "image/jpeg", id, id, 1, 4, 3, 0, 0, 0, key, 0,
+    )
+
+    @Test
+    fun aDescriptionSavedWithoutItsEmbeddingIsListedForOne(): Unit = runBlocking {
+        db.media().upsert(listOf(media(1, "a"), media(2, "a"), media(3, "b"), media(4, "c"), media(5, "d")))
+        // "a": captioned and embedded, then its text read but MiniLM failed: the stale embedding goes.
+        dao.saveDescribed(DescriptionEntity("a", "a cat", null, "", 1, null), embedding("a"))
+        dao.saveUnembedded(DescriptionEntity("a", "a cat", "SALE", "", 2, null))
+        dao.saveDescribed(DescriptionEntity("b", "a dog", null, "", 3, null), embedding("b"))
+        dao.saveUnembedded(DescriptionEntity("c", "  ", "", "", 4, null)) // nothing to embed
+        dao.upsertDescription(DescriptionEntity("d", "a cow", null, "", 5, "unreadable")) // set aside
+
+        assertThat(dao.embedding("a", "m")).isNull()
+        // Once for description "a", though two files share it.
+        assertThat(dao.withoutEmbedding("m").map { it.aiKey }).containsExactly("a")
+    }
+
     @Test
     fun forgettingTakesTheEmbeddingWithIt() = runBlocking {
         dao.saveDescribed(DescriptionEntity("k", "a cat", null, "", 1, null), embedding("k"))

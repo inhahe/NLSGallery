@@ -181,15 +181,20 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   recognizer + MiniLM for text), describes one file at a time (serialized), saves description
   and embedding together (re-embedded when OCR text arrives: the embedding records a hash of
   its text), `release()` closes the models. `describe` reports what it did (`Outcome`). Reading
-  the file failing is the file's fault: the error is saved, unless the file cannot be opened at
-  all just now (deleted, card removed), which leaves it for the next run. The models failing
+  the file failing (or running out of memory reading it) is the file's fault: the error is
+  saved, unless the file cannot be opened at all just now (deleted, card removed), which leaves
+  it for the next run. Opening or running the models failing (running out of memory included)
   saves nothing: whose fault it is shows over the run (`ModelFailureTracker` in
   `DescribeWorker`). If the models work for another file in the run, the failure is the file's
-  and counted (`recordModelFailure`; the third sets it aside as failed); three in a row say the
-  models are failing (memory, say), and the run stops, blaming no file, to be retried later.
-  The models are closed after each such failure, giving back their memory. A file on record as
-  failed is skipped, so the text pass does not retry what the caption pass just failed on
-  (`DescribeFailureTest`).
+  and counted (`recordModelFailure`; the third, until the description is complete, sets it
+  aside as failed). After three in a row a probe (`modelsWork`: a small picture of the app's
+  own through the same models) decides: working, the three are counted and the run goes on;
+  failing too, the run stops, blaming none, and WorkManager retries it later. The models are
+  closed after each failure, giving back their memory. MiniLM failing is never the file's (its
+  input is text): the description is saved without an embedding (any older one, of other text,
+  removed with it), and the next run's embedding pass (`AiDao.withoutEmbedding`,
+  `embedMissing`) makes it. A file on record as failed is skipped, so the text pass does not
+  retry what the caption pass just failed on (`DescribeFailureTest`).
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.
@@ -220,8 +225,9 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 
 Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s
 each, so the whole library is soon searchable; then the text in pictures, 10-60 s each, ordered
-screenshots, downloads, messages, other, camera (`AiDao.withoutText`). It saves per file, so
-stopping loses at most one. With more than
+screenshots, downloads, messages, other, camera (`AiDao.withoutText`). Before them, the
+embeddings MiniLM failed to make are made (milliseconds each). It saves per file, so stopping
+loses at most one. With more than
 three files (or user-started) it asks to run in the foreground with a progress notification and
 a Stop action (`mediaProcessing` on Android 15+, `dataSync` before); Android may refuse that from
 the background, and then it runs as a normal job (10-minute limit, resumed by the next trigger).

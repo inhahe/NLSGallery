@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import com.lithic.gallery.ai.AiEngine
+import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
@@ -80,6 +81,26 @@ class DescribeFailureTest {
             resolver.delete(uri, null, null)
             dao.deleteDescription(key)
         }
+    }
+
+    @Test
+    fun anEmbeddingMiniLmFailedToMakeIsMadeLater() = runBlocking {
+        val key = "describe-failure-test-unembedded-${System.nanoTime()}"
+        try {
+            dao.saveUnembedded(DescriptionEntity(key, "a cat sitting on a couch", "", "", 1L, null))
+            assertThat(dao.embedding(key, MiniLmEmbedder.MODEL_ID)).isNull()
+            assertThat(app.ai.embedMissing(key, captionsOnly)).isEqualTo(AiEngine.Outcome.Described)
+            assertThat(dao.embedding(key, MiniLmEmbedder.MODEL_ID)).isNotNull()
+            // Made, it is not made again.
+            assertThat(app.ai.embedMissing(key, captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
+        } finally {
+            dao.forget(key)
+        }
+    }
+
+    @Test
+    fun theProbeFindsTheModelsWorking() = runBlocking {
+        assertThat(app.ai.modelsWork(captionsOnly, captions = true, ocr = false)).isTrue()
     }
 
     @Test

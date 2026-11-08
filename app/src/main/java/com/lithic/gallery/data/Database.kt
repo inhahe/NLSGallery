@@ -79,7 +79,10 @@ data class DescriptionEntity(
      * failures are retried.
      */
     val error: String?,
-    /** Runs in a row in which the models failed on it (not counting those that read the file wrong). */
+    /**
+     * Runs in which the models failed on it while they worked for other files, since its
+     * description was last complete.
+     */
     @ColumnInfo(defaultValue = "0") val modelFailures: Int = 0,
 ) {
     companion object {
@@ -192,6 +195,29 @@ interface AiDao {
         upsertDescription(d)
         if (e != null) upsertEmbedding(e)
     }
+
+    /**
+     * A description whose embedding could not be made: saved, and any older embedding (of other
+     * text) removed with it, so [withoutEmbedding] lists it.
+     */
+    @Transaction
+    suspend fun saveUnembedded(d: DescriptionEntity) {
+        upsertDescription(d)
+        deleteEmbeddings(d.hash)
+    }
+
+    /**
+     * Files whose description has text but no [model] embedding (MiniLM failed when it was
+     * saved), one per description.
+     */
+    @Query(
+        """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
+           LEFT JOIN ai_embeddings e ON e.hash = d.hash AND e.model = :model
+           WHERE d.error IS NULL AND e.hash IS NULL
+             AND (TRIM(COALESCE(d.caption, '')) != '' OR TRIM(COALESCE(d.ocr, '')) != '')
+           GROUP BY d.hash"""
+    )
+    suspend fun withoutEmbedding(model: String): List<MediaEntity>
 
     /**
      * Files still to describe, newest first: no description, or a part that is wanted and missing.

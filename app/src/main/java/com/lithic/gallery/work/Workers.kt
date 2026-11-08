@@ -19,6 +19,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.lithic.gallery.GalleryApp
 import com.lithic.gallery.ai.AiEngine
+import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.R
 import com.lithic.gallery.data.MediaScanner
 import com.lithic.gallery.data.Settings
@@ -150,8 +151,13 @@ object Work {
 /**
  * Describes every file that lacks a description (or a part of one now switched on), in two
  * passes: captions first, newest first (about 2 s each, so the whole library becomes searchable
- * soon), then the text in pictures (10-60 s each), likeliest to hold text first. Each file is
- * saved as it finishes, so stopping loses at most the one in progress.
+ * soon), then the text in pictures (10-60 s each), likeliest to hold text first. Before them it
+ * makes the embeddings MiniLM failed to make (milliseconds each). Each file is saved as it
+ * finishes, so stopping loses at most the one in progress.
+ *
+ * When the models fail on file after file, a probe tells whether they work at all: if they do,
+ * the files are at fault (counted, see [AiEngine.recordModelFailure]) and the run goes on; if
+ * not, it stops, blaming none, and WorkManager runs it again later.
  */
 class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -161,9 +167,10 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (!app.ai.ready(s)) return Result.success()
         app.repository.sync()
         val dao = app.db.ai()
+        val embedPass = dao.withoutEmbedding(MiniLmEmbedder.MODEL_ID)
         val captionPass = if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false) else emptyList()
         val textPass = if (s.ocr) dao.withoutText(s.describeVideos) else emptyList()
-        val total = captionPass.size + textPass.size
+        val total = embedPass.size + captionPass.size + textPass.size
         if (total == 0) return Result.success()
         val user = inputData.getBoolean(Work.KEY_USER, false)
         // A notification for any run worth watching. From the background Android may refuse a
@@ -182,9 +189,10 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         suspend fun blame(files: List<Pair<com.lithic.gallery.data.MediaEntity, String>>) {
             for ((item, message) in files) app.ai.recordModelFailure(item, message)
         }
-        suspend fun step(item: com.lithic.gallery.data.MediaEntity, captions: Boolean, ocr: Boolean) {
-            when (val outcome = app.ai.describe(item, s, captions = captions, ocr = ocr)) {
-                AiEngine.Outcome.Described -> blame(modelFailures.described())
+        /** Records [outcome]; false when the run should stop (the models fail even on a probe). */
+        suspend fun step(item: com.lithic.gallery.data.MediaEntity, outcome: AiEngine.Outcome, captions: Boolean, ocr: Boolean): Boolean {
+            when (outcome) {
+                AiEngine.Outcome.Described -> blame(modelFailures.modelsWorked())
                 is AiEngine.Outcome.ModelsFailed -> {
                     modelFailures.modelsFailed(item, outcome.message)
                     // If it was memory, the next file gets what closing the models gives back.
@@ -196,17 +204,23 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             setProgress(workDataOf(Work.KEY_DONE to done, Work.KEY_TOTAL to total,
                 Work.KEY_PHASE to if (ocr) "text" else "captions"))
             if (foreground) setForeground(Work.describeNotification(applicationContext, id, done, total, if (ocr) "text" else "captions"))
+            if (!modelFailures.shouldProbe) return true
+            if (!app.ai.modelsWork(s, captions, ocr)) return false
+            blame(modelFailures.modelsWorked())
+            return true
         }
         try {
+            for (item in embedPass) {
+                if (isStopped) return Result.success()
+                if (!step(item, app.ai.embedMissing(item.aiKey, s), captions = false, ocr = false)) return stopForModels()
+            }
             for (item in captionPass) {
                 if (isStopped) return Result.success()
-                step(item, captions = true, ocr = false)
-                if (modelFailures.shouldStop) return stopForModels()
+                if (!step(item, app.ai.describe(item, s, captions = true, ocr = false), captions = true, ocr = false)) return stopForModels()
             }
             for (item in textPass) {
                 if (isStopped) return Result.success()
-                step(item, captions = false, ocr = true)
-                if (modelFailures.shouldStop) return stopForModels()
+                if (!step(item, app.ai.describe(item, s, captions = false, ocr = true), captions = false, ocr = true)) return stopForModels()
             }
             blame(modelFailures.finished())
         } finally {
@@ -216,9 +230,9 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         return Result.success()
     }
 
-    /** The models failed on file after file: whatever the cause, try the run again later. */
+    /** The models fail on file after file and on a probe: try the run again later. */
     private fun stopForModels(): Result {
-        Log.w(TAG, "the models failed on several files in a row; describing again later")
+        Log.w(TAG, "the models are failing; describing again later")
         return Result.retry()
     }
 

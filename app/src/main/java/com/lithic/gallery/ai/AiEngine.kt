@@ -52,7 +52,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         data object Described : Outcome
         /** Nothing to do, on record as failed, or not to be opened just now: left as it was. */
         data object Skipped : Outcome
-        /** It could not be read (or ran out of memory): saved as failed. */
+        /** It could not be read (or ran out of memory being read): saved as failed. */
         data object Failed : Outcome
         /**
          * The models failed on it and nothing was saved: the file's fault if they work for others
@@ -69,10 +69,11 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      * What a failure leaves depends on where it happens. Reading the file: the file is at fault,
      * and the error is saved, so it is not tried again until it changes (a new key) or is reset;
      * but a file that cannot be opened at all just now (deleted while waiting, card removed,
-     * access revoked) is left for the next run. Running the models: nothing is saved, and the
-     * caller, which sees whether the models work for other files, decides whose fault it was.
-     * Running out of Java memory anywhere is the file's size, and saved as its error. A failure
-     * saves only the parts made before this call, which have their embedding.
+     * access revoked) is left for the next run, and running out of memory reading it is its size.
+     * Opening or running the models (out of memory included, the image being bounded by then):
+     * nothing is saved, and the caller, which sees whether the models work for other files,
+     * decides whose fault it was. The embedding failing alone: the description is saved without
+     * it, for [embedMissing] to make.
      */
     suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr): Outcome = mutex.withLock {
         withContext(Dispatchers.Default) {
@@ -81,7 +82,6 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             val wantCaption = captions && existing?.caption == null
             val wantOcr = ocr && existing?.ocr == null
             if (!wantCaption && !wantOcr) return@withContext Outcome.Skipped
-            open(captions, ocr, s)
             var caption = existing?.caption
             var text = existing?.ocr
             var manual = existing?.manualCaption ?: ""
@@ -121,8 +121,8 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
             var tCaption = 0L
             var tOcr = 0L
-            val embedding: EmbeddingEntity?
             try {
+                open(captions, ocr, s)
                 if (wantCaption) {
                     val t = System.nanoTime()
                     // A video: each sampled frame's caption, repeats dropped, for what it shows over time.
@@ -135,19 +135,88 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                     text = easyOcr!!.text(frames[frames.size / 2])
                     tOcr = ms(t)
                 }
-                embedding = embed(item.aiKey, caption ?: "", text ?: "")
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.w(TAG, "the models failed on ${item.id}", e)
                 return@withContext Outcome.ModelsFailed(e.message ?: e.javaClass.simpleName)
             } catch (e: OutOfMemoryError) {
-                Log.w(TAG, "describing ${item.uri} ran out of memory", e)
-                return@withContext fail("out of memory")
+                Log.w(TAG, "the models ran out of memory on ${item.id}", e)
+                return@withContext Outcome.ModelsFailed("out of memory")
             }
-            dao.saveDescribed(DescriptionEntity(item.aiKey, caption, text, manual, writeTime(), null), embedding)
+            // Failures are counted until it is complete, whichever part they were in.
+            val failures = if (caption != null && text != null) 0 else existing?.modelFailures ?: 0
+            val description = DescriptionEntity(item.aiKey, caption, text, manual, writeTime(), null, failures)
+            save(description, item.id)
             // Timings only: what the pictures show stays out of the log.
             Log.i(TAG, "described ${item.id}: decode ${tDecode}ms caption ${tCaption}ms ocr ${tOcr}ms")
             Outcome.Described
+        }
+    }
+
+    /**
+     * Saves [description] with the embedding of its text. MiniLM failing is never the file's
+     * fault (it reads at most 256 tokens of text): the description is saved without one (any
+     * older embedding, now of other text, removed with it) for [embedMissing] to make.
+     */
+    private suspend fun save(description: DescriptionEntity, mediaId: Long) {
+        val embedding = try {
+            embed(description.hash, description.caption ?: "", description.ocr ?: "")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "embedding $mediaId failed; it is embedded later", e)
+            return dao.saveUnembedded(description)
+        } catch (e: OutOfMemoryError) {
+            Log.w(TAG, "embedding $mediaId ran out of memory; it is embedded later", e)
+            return dao.saveUnembedded(description)
+        }
+        dao.saveDescribed(description, embedding)
+    }
+
+    /**
+     * Makes the embedding description [key] lacks (MiniLM failed when it was saved). Only MiniLM
+     * is opened.
+     */
+    suspend fun embedMissing(key: String, s: Settings): Outcome = mutex.withLock {
+        withContext(Dispatchers.Default) {
+            val d = dao.description(key)
+            if (d == null || d.error != null) return@withContext Outcome.Skipped
+            val embedding = try {
+                open(captions = false, ocr = false, s)
+                embed(key, d.caption ?: "", d.ocr ?: "") ?: return@withContext Outcome.Skipped
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "embedding failed again", e)
+                return@withContext Outcome.ModelsFailed(e.message ?: e.javaClass.simpleName)
+            } catch (e: OutOfMemoryError) {
+                return@withContext Outcome.ModelsFailed("out of memory")
+            }
+            // A new describedAt, so the search index sees the change.
+            dao.saveDescribed(d.copy(describedAt = writeTime()), embedding)
+            Outcome.Described
+        }
+    }
+
+    /**
+     * Whether the models a pass needs ([captions], [ocr], and MiniLM) run at all: a small picture
+     * of the app's own through them. A run whose files fail one after another asks, to tell
+     * failing models from failing files.
+     */
+    suspend fun modelsWork(s: Settings, captions: Boolean, ocr: Boolean): Boolean = mutex.withLock {
+        withContext(Dispatchers.Default) {
+            try {
+                open(captions, ocr, s)
+                val probe = RgbImage(96, 64, ByteArray(96 * 64 * 3) { (it * 7 % 251).toByte() })
+                if (captions) blip!!.caption(probe)
+                if (ocr) easyOcr!!.text(probe)
+                minilm!!.embed("a probe")
+                true
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "the models fail on a probe too", e)
+                false
+            } catch (e: OutOfMemoryError) {
+                false
+            }
         }
     }
 
