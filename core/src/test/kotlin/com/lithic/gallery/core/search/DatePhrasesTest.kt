@@ -130,6 +130,57 @@ class DatePhrasesTest {
         assertEveryYear("fourth of july", listOf(d(2015, 7, 4)), listOf(d(2015, 7, 5)))
     }
 
+    /** [query] reads as one span that holds [day]. */
+    private fun assertHolds(query: String, day: LocalDate, p: DatePhrases = us) {
+        val (spans, _) = read(query, p)
+        assertWithMessage("'$query' read as $spans").that(spans.any { day in it }).isTrue()
+    }
+
+    @Test
+    fun holidaysOfOtherCalendars() {
+        // The main day falls in each festival's span, whichever of its days a country keeps.
+        val main = mapOf(
+            "diwali" to listOf("2019-10-27", "2020-11-14", "2021-11-04", "2022-10-24", "2023-11-12", "2024-10-31", "2025-10-20", "2026-11-08"),
+            "holi" to listOf("2019-03-21", "2020-03-10", "2021-03-29", "2022-03-18", "2023-03-08", "2024-03-25", "2025-03-14", "2026-03-04"),
+            "chinese new year" to listOf("2023-01-22", "2024-02-10", "2025-01-29", "2026-02-17"),
+            "mid-autumn festival" to listOf("2023-09-29", "2024-09-17", "2025-10-06"),
+            "ramadan" to listOf("2024-03-11", "2024-04-09", "2025-03-01", "2025-03-29"),
+            "eid al-fitr" to listOf("2023-04-21", "2024-04-10", "2025-03-30"),
+            "eid al-adha" to listOf("2023-06-28", "2024-06-16", "2025-06-06"),
+            "hanukkah" to listOf("2023-12-08", "2023-12-15", "2024-12-26", "2025-12-22"),
+            "passover" to listOf("2024-04-23", "2024-04-30", "2025-04-13"),
+            "rosh hashanah" to listOf("2024-10-03", "2024-10-04", "2025-09-23"),
+            "yom kippur" to listOf("2024-10-12", "2025-10-02"),
+        )
+        for ((holiday, days) in main) for (s in days) assertHolds("$holiday ${s.take(4)}", LocalDate.parse(s))
+        // Ramadan ends where Eid begins.
+        assertThat(read("ramadan 2024").first.single().until).isEqualTo(d(2024, 4, 10))
+        // Other names.
+        for ((q, day) in listOf("deepavali 2023" to "2023-11-12", "lunar new year 2024" to "2024-02-10", "tet 2025" to "2025-01-29",
+            "pesach 2024" to "2024-04-23", "chanukah 2024" to "2024-12-26", "bakrid 2024" to "2024-06-16", "moon festival 2024" to "2024-09-17")) {
+            assertHolds(q, LocalDate.parse(day))
+        }
+        // Two Eids in a year; "eid" alone is both.
+        assertThat(read("eid 2024").first).hasSize(2)
+        assertEveryYear("eid", listOf(d(2024, 4, 10), d(2024, 6, 16)), listOf(d(2024, 5, 10)))
+        assertEveryYear("holi", listOf(d(2024, 3, 25)), listOf(d(2024, 4, 25)))
+        // Today, 7 November 2026, is in Diwali 2026 (6-11 November): last Diwali is 2025's.
+        assertHolds("last diwali", d(2025, 10, 20))
+        assertHolds("this diwali", d(2026, 11, 8))
+        assertNoDate("holiday photos")
+        assertNoDate("eid card")
+    }
+
+    @Test
+    fun holidaysKeptOnOtherDaysByCountry() {
+        assertSpan("mother's day 2024", day(2024, 5, 12))
+        assertSpan("mother's day 2024", day(2024, 3, 10), p = DatePhrases(today, country = "GB"))
+        assertSpan("father's day 2024", day(2024, 6, 16))
+        assertSpan("father's day 2024", day(2024, 9, 1), p = DatePhrases(today, country = "AU"))
+        assertSpan("st patrick's day 2024", day(2024, 3, 17))
+        assertSpan("mother's day 2024", day(2024, 3, 10), p = DatePhrases.forLocale(today, Locale.UK))
+    }
+
     @Test
     fun easter() {
         // Easter Sundays from published tables.
@@ -146,7 +197,7 @@ class DatePhrasesTest {
         assertSpan("thanksgiving 2023", days(d(2023, 11, 23), d(2023, 11, 26)))
         assertSpan("last thanksgiving", days(d(2025, 11, 27), d(2025, 11, 30)))
         assertSpan("this thanksgiving", days(d(2026, 11, 26), d(2026, 11, 29)))
-        val canada = DatePhrases(today, canadianThanksgiving = true)
+        val canada = DatePhrases(today, country = "CA")
         assertSpan("thanksgiving 2025", days(d(2025, 10, 11), d(2025, 10, 13)), p = canada)
         assertSpan("thanksgiving 2024", days(d(2024, 10, 12), d(2024, 10, 14)), p = canada)
         assertSpan("last thanksgiving", days(d(2026, 10, 10), d(2026, 10, 12)), p = canada)

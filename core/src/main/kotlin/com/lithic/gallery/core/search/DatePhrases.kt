@@ -33,8 +33,11 @@ class DatePhrases(
     private val firstDayOfWeek: DayOfWeek = DayOfWeek.MONDAY,
     /** Whether 3/5/2024 is March 5 (the United States) rather than 3 May. */
     private val monthFirst: Boolean = true,
-    /** Canada's Thanksgiving (the second Monday of October) rather than the United States'. */
-    private val canadianThanksgiving: Boolean = false,
+    /**
+     * Where the phone is (ISO 3166), for holidays countries keep on different days: Canada's
+     * Thanksgiving, Britain's and Ireland's Mothering Sunday, Australia's Father's Day.
+     */
+    private val country: String = "US",
     /** How days are written in labels. */
     private val locale: Locale = Locale.US,
 ) {
@@ -223,12 +226,12 @@ class DatePhrases(
     }
 
     /**
-     * Of a yearly thing's occurrences ([of] gives the one in a year, a single span): with [last],
-     * the latest that is over; else ("this") the one under way, else the latest this year has
-     * seen, else the next.
+     * Of a yearly thing's occurrences ([of] gives those in a year, each a single span: a lunar
+     * holiday can come twice): with [last], the latest that is over; else ("this") the one under
+     * way, else the latest this year has seen, else the next.
      */
-    private fun occurrence(last: Boolean, of: (Int) -> Within): DateFilter {
-        val around = (today.year - 2..today.year + 1).map(of)
+    private fun occurrence(last: Boolean, of: (Int) -> List<Within>): DateFilter {
+        val around = (today.year - 2..today.year + 1).flatMap(of)
         fun Within.span() = spans.single()
         return if (last) around.filter { !it.span().until.isAfter(today) }.maxBy { it.span().from }
         else around.firstOrNull { today in it.span() }
@@ -295,7 +298,11 @@ class DatePhrases(
         CHRISTMAS("Christmas"), CHRISTMAS_EVE("Christmas Eve"), CHRISTMAS_DAY("Christmas Day"),
         NEW_YEARS_EVE("New Year's Eve"), NEW_YEARS_DAY("New Year's Day"), NEW_YEAR("New Year"),
         HALLOWEEN("Halloween"), VALENTINES("Valentine's Day"), FOURTH_OF_JULY("Fourth of July"),
-        EASTER("Easter"), THANKSGIVING("Thanksgiving"),
+        EASTER("Easter"), THANKSGIVING("Thanksgiving"), MOTHERS_DAY("Mother's Day"), FATHERS_DAY("Father's Day"),
+        ST_PATRICKS("St Patrick's Day"),
+        DIWALI("Diwali"), HOLI("Holi"), LUNAR_NEW_YEAR("Lunar New Year"), MID_AUTUMN("Mid-Autumn Festival"),
+        RAMADAN("Ramadan"), EID_AL_FITR("Eid al-Fitr"), EID_AL_ADHA("Eid al-Adha"), EID("Eid"),
+        HANUKKAH("Hanukkah"), PASSOVER("Passover"), ROSH_HASHANAH("Rosh Hashanah"), YOM_KIPPUR("Yom Kippur"),
     }
 
     private fun holiday(s: String): Holiday = when (s.replace("'", "")) {
@@ -310,13 +317,64 @@ class DatePhrases(
         "fourth of july", "july fourth", "independence day" -> Holiday.FOURTH_OF_JULY
         "easter" -> Holiday.EASTER
         "thanksgiving" -> Holiday.THANKSGIVING
+        "mothers day", "mothering sunday" -> Holiday.MOTHERS_DAY
+        "fathers day" -> Holiday.FATHERS_DAY
+        "st patricks day", "saint patricks day", "st paddys day", "paddys day" -> Holiday.ST_PATRICKS
+        "diwali", "deepavali" -> Holiday.DIWALI
+        "holi" -> Holiday.HOLI
+        "lunar new year", "chinese new year", "tet" -> Holiday.LUNAR_NEW_YEAR
+        "mid-autumn festival", "mid autumn festival", "moon festival", "mooncake festival" -> Holiday.MID_AUTUMN
+        "ramadan", "ramzan" -> Holiday.RAMADAN
+        "eid al-fitr", "eid al fitr", "eid ul-fitr", "eid ul fitr", "eid-ul-fitr" -> Holiday.EID_AL_FITR
+        "eid al-adha", "eid al adha", "eid ul-adha", "eid ul adha", "eid-ul-adha", "bakrid" -> Holiday.EID_AL_ADHA
+        "eid" -> Holiday.EID
+        "hanukkah", "chanukah", "hanukah" -> Holiday.HANUKKAH
+        "passover", "pesach" -> Holiday.PASSOVER
+        "rosh hashanah", "rosh hashana" -> Holiday.ROSH_HASHANAH
+        "yom kippur" -> Holiday.YOM_KIPPUR
         else -> throw IllegalArgumentException("'$s' is in HOLIDAY but has no Holiday")
     }
 
-    /** [name] (a holiday) in [year], with the days around it that belong to it. */
-    private fun holidaySpan(name: String, year: Int): Within {
-        val h = holiday(name)
-        val span = when (h) {
+    /**
+     * [h]'s days in [year], with those around it that belong to it: a lunar holiday's festival,
+     * and a day either side where countries see it on different days. An Islamic holiday can
+     * come twice in a year, or once.
+     */
+    private fun holidaySpans(h: Holiday, year: Int): List<Span> = when (h) {
+        // Lakshmi Puja's night, the festival's days either side (Dhanteras to Bhai Dooj), a day's leeway.
+        Holiday.DIWALI -> listOf(around(LunarHolidays.diwali(year), 3, 3))
+        // Holika Dahan on the full moon, Holi the day after.
+        Holiday.HOLI -> listOf(around(LunarHolidays.holiFullMoon(year), 1, 2))
+        // New Year's Eve to the fourth day.
+        Holiday.LUNAR_NEW_YEAR -> listOf(around(LunarHolidays.lunarNewYear(year), 1, 4))
+        Holiday.MID_AUTUMN -> listOf(around(LunarHolidays.midAutumn(year), 1, 2))
+        // The month, to Eid al-Fitr (29 or 30 days).
+        Holiday.RAMADAN -> LunarHolidays.hijriMonthStarts(year, 9).map { start ->
+            Span(start, (LunarHolidays.hijriMonthStarts(year, 10) + LunarHolidays.hijriMonthStarts(year + 1, 10)).first { it.isAfter(start) })
+        }
+        Holiday.EID_AL_FITR -> eidAlFitr(year)
+        Holiday.EID_AL_ADHA -> eidAlAdha(year)
+        Holiday.EID -> (eidAlFitr(year) + eidAlAdha(year)).sortedBy { it.from }
+        // Jewish holidays begin at sunset: the evening before is theirs.
+        Holiday.HANUKKAH -> listOf(around(HebrewCalendar.hanukkah(year), 1, 8))
+        Holiday.PASSOVER -> listOf(around(HebrewCalendar.passover(year), 1, 8))
+        Holiday.ROSH_HASHANAH -> listOf(around(HebrewCalendar.roshHashanah(year), 1, 2))
+        Holiday.YOM_KIPPUR -> listOf(around(HebrewCalendar.yomKippur(year), 1, 1))
+        else -> listOf(fixedHoliday(h, year))
+    }
+
+    /** Eid al-Fitr, 1 Shawwal, three days (and the eve). */
+    private fun eidAlFitr(year: Int) = LunarHolidays.hijriMonthStarts(year, 10).map { around(it, 1, 3) }
+
+    /** Eid al-Adha, 10 Dhu al-Hijjah, four days (and the eve). */
+    private fun eidAlAdha(year: Int) = LunarHolidays.hijriMonthStarts(year, 12).map { around(it.plusDays(9), 1, 4) }
+
+    /** The days from [before] days before [day] to [count] days from it ([day] the first of them). */
+    private fun around(day: LocalDate, before: Int, count: Int) = Span(day.minusDays(before.toLong()), day.plusDays(count.toLong()))
+
+    /** A holiday set by the solar calendar, in [year]. */
+    private fun fixedHoliday(h: Holiday, year: Int): Span {
+        return when (h) {
             Holiday.CHRISTMAS -> days(LocalDate.of(year, 12, 24), 3) // Christmas Eve to Boxing Day
             Holiday.CHRISTMAS_EVE -> days(LocalDate.of(year, 12, 24), 1)
             Holiday.CHRISTMAS_DAY -> days(LocalDate.of(year, 12, 25), 1)
@@ -328,16 +386,39 @@ class DatePhrases(
             Holiday.FOURTH_OF_JULY -> days(LocalDate.of(year, 7, 4), 1)
             Holiday.EASTER -> days(easterSunday(year).minusDays(2), 4) // Good Friday to Easter Monday
             Holiday.THANKSGIVING ->
-                if (canadianThanksgiving) { // the long weekend ending on its Monday
-                    days(LocalDate.of(year, 10, 1).with(TemporalAdjusters.dayOfWeekInMonth(2, DayOfWeek.MONDAY)).minusDays(2), 3)
+                if (country == "CA") { // the long weekend ending on its Monday
+                    days(nthWeekday(year, 10, 2, DayOfWeek.MONDAY).minusDays(2), 3)
                 } else { // Thursday to Sunday
-                    days(LocalDate.of(year, 11, 1).with(TemporalAdjusters.dayOfWeekInMonth(4, DayOfWeek.THURSDAY)), 4)
+                    days(nthWeekday(year, 11, 4, DayOfWeek.THURSDAY), 4)
                 }
+            Holiday.MOTHERS_DAY ->
+                if (country == "GB" || country == "IE") days(easterSunday(year).minusDays(21), 1) // Mothering Sunday
+                else days(nthWeekday(year, 5, 2, DayOfWeek.SUNDAY), 1)
+            Holiday.FATHERS_DAY ->
+                if (country == "AU" || country == "NZ") days(nthWeekday(year, 9, 1, DayOfWeek.SUNDAY), 1)
+                else days(nthWeekday(year, 6, 3, DayOfWeek.SUNDAY), 1)
+            Holiday.ST_PATRICKS -> days(LocalDate.of(year, 3, 17), 1)
+            else -> throw IllegalArgumentException("$h is not set by the solar calendar")
         }
-        return explained("${h.title} $year", span)
     }
 
-    private fun everyHoliday(name: String): DateFilter = EveryYear("every ${holiday(name).title}") { y -> holidaySpan(name, y).spans }
+    private fun nthWeekday(year: Int, month: Int, n: Int, day: DayOfWeek): LocalDate =
+        LocalDate.of(year, month, 1).with(TemporalAdjusters.dayOfWeekInMonth(n, day))
+
+    /** [name] (a holiday) in [year]: "Christmas 2022: Dec 24, 2022 – Dec 26, 2022" (an Islamic one, perhaps twice). */
+    private fun holidayIn(name: String, year: Int): Within {
+        val h = holiday(name)
+        val spans = holidaySpans(h, year)
+        return Within(spans, "${h.title} $year: ${spans.joinToString(" and ") { range(it) }}")
+    }
+
+    /** Each time [name] (a holiday) comes in [year], on its own. */
+    private fun holidayOccurrences(name: String, year: Int): List<Within> {
+        val h = holiday(name)
+        return holidaySpans(h, year).map { explained("${h.title} $year", it) }
+    }
+
+    private fun everyHoliday(name: String): DateFilter = holiday(name).let { h -> EveryYear("every ${h.title}") { y -> holidaySpans(h, y) } }
 
     private fun days(from: LocalDate, n: Int) = Span(from, from.plusDays(n.toLong()))
 
@@ -428,16 +509,16 @@ class DatePhrases(
             // The calendar: "last week", "this month", "last weekend".
             Rule("(last|this|previous) (week|weekend|month|year)") { g -> calendar(g[1] != "this", g[2]) },
             // The latest of something yearly: "last summer", "this march", "last christmas".
-            Rule("(last|this|previous) $SEASON") { g -> occurrence(g[1] != "this") { y -> seasonSpan(g[2], y) } },
-            Rule("(last|this|previous) $HOLIDAY") { g -> occurrence(g[1] != "this") { y -> holidaySpan(g[2], y) } },
-            Rule("(last|this|previous) $MONTH") { g -> occurrence(g[1] != "this") { y -> monthSpan(month(g[2]), y) } },
+            Rule("(last|this|previous) $SEASON") { g -> occurrence(g[1] != "this") { y -> listOf(seasonSpan(g[2], y)) } },
+            Rule("(last|this|previous) $HOLIDAY") { g -> occurrence(g[1] != "this") { y -> holidayOccurrences(g[2], y) } },
+            Rule("(last|this|previous) $MONTH") { g -> occurrence(g[1] != "this") { y -> listOf(monthSpan(month(g[2]), y)) } },
             Rule("(?:last|previous) $WEEKDAY") { g -> weekday(g[1], strictlyBefore = true) },
             Rule("(?:this|on) $WEEKDAY") { g -> weekday(g[1], strictlyBefore = false) },
             // With a year: "summer 2023", "christmas of 2022", "march 2023".
             Rule("$SEASON (?:of )?$YEAR") { g -> seasonIn(g[1], g[2].toInt()) },
             Rule("$YEAR $SEASON") { g -> seasonIn(g[2], g[1].toInt()) },
-            Rule("$HOLIDAY (?:of )?$YEAR") { g -> holidaySpan(g[1], g[2].toInt()) },
-            Rule("$YEAR $HOLIDAY") { g -> holidaySpan(g[2], g[1].toInt()) },
+            Rule("$HOLIDAY (?:of )?$YEAR") { g -> holidayIn(g[1], g[2].toInt()) },
+            Rule("$YEAR $HOLIDAY") { g -> holidayIn(g[2], g[1].toInt()) },
             Rule("$MONTH (?:of )?$YEAR") { g -> monthSpan(month(g[1]), g[2].toInt()) },
             Rule("$YEAR $MONTH") { g -> monthSpan(month(g[2]), g[1].toInt()) },
             // Decades: "the 90s", "1990s". A bare "90s" is also a style ("90s fashion").
@@ -465,7 +546,12 @@ class DatePhrases(
         private const val MONTH_ALONE = "(january|february|march|april|june|july|august|september|october|november|december)"
         private const val SEASON = "(spring|summer|autumn|fall|winter)"
         private const val HOLIDAY = "(christmas eve|christmas day|christmas|xmas|new year'?s eve|new year'?s day|new year'?s|new year|" +
-            "halloween|valentine'?s day|valentine'?s|valentine|thanksgiving|easter|fourth of july|july fourth|independence day)"
+            "halloween|valentine'?s day|valentine'?s|valentine|thanksgiving|easter|fourth of july|july fourth|independence day|" +
+            "mother'?s day|mothering sunday|father'?s day|st patrick'?s day|saint patrick'?s day|st paddy'?s day|paddy'?s day|" +
+            "diwali|deepavali|holi|lunar new year|chinese new year|tet|mid-autumn festival|mid autumn festival|moon festival|" +
+            "mooncake festival|ramadan|ramzan|eid al-fitr|eid al fitr|eid ul-fitr|eid ul fitr|eid-ul-fitr|eid al-adha|eid al adha|" +
+            "eid ul-adha|eid ul adha|eid-ul-adha|bakrid|eid|hanukkah|chanukah|hanukah|passover|pesach|rosh hashanah|rosh hashana|" +
+            "yom kippur)"
         private const val WEEKDAY = "(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
         private const val NUMBER = "(\\d{1,3}|a couple of|a couple|couple of|a few|few|several|an?|one|two|three|four|five|six|seven|" +
             "eight|nine|ten|eleven|twelve)"
@@ -495,7 +581,7 @@ class DatePhrases(
                 southern = southernCountry(locale.country),
                 firstDayOfWeek = WeekFields.of(locale).firstDayOfWeek,
                 monthFirst = pattern.indexOf('M').let { m -> m >= 0 && m < pattern.indexOf('d') },
-                canadianThanksgiving = locale.country.equals("CA", ignoreCase = true),
+                country = locale.country.uppercase(Locale.ROOT),
                 locale = locale,
             )
         }

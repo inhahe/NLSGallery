@@ -64,7 +64,10 @@ the search field choose where to look, and can limit results to the current tab.
 **Dates.** Say when, in plain English: "beach last summer", "dog 2023", "christmas", "flowers in
 may", "two weeks ago", "yesterday", "march 5", "the 90s", "since 2020", "between 2019 and 2021",
 even "show me photos of dogs from last summer". "Videos" asks for videos: "videos from last
-summer", "videos of the dog", "dog videos".
+summer", "videos of the dog", "dog videos". Holidays: Christmas, New Year, Easter, Thanksgiving,
+Halloween, Valentine's Day, Mother's and Father's Day, St Patrick's Day, the Fourth of July,
+Diwali, Holi, the Lunar New Year, the Mid-Autumn Festival, Ramadan, Eid, Hanukkah, Passover,
+Rosh Hashanah and Yom Kippur, each on its own calendar's days ("diwali 2023", "last eid").
 The search then looks only among the pictures taken then; a date on its own lists them all,
 newest first (which works before anything is described). A chip under the search field shows
 how the date was read ("summer 2026: Jun 1, 2026 – Aug 31, 2026"); tap it to search for those

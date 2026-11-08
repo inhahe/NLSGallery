@@ -282,7 +282,22 @@ synced) and `MediaDetails`.
   turned round in the southern hemisphere (by the locale's country). Holidays: Christmas (24-26
   December), its Eve and Day, New Year (31 December and 1 January), its Eve and Day, Halloween,
   Valentine's Day, the Fourth of July, Easter (Good Friday to Easter Monday, Gregorian computus),
-  Thanksgiving (the United States' Thursday to Sunday, Canada's long weekend). A word that is
+  Thanksgiving (the United States' Thursday to Sunday, Canada's long weekend), Mother's Day
+  (Britain's and Ireland's Mothering Sunday), Father's Day (Australia's in September), St
+  Patrick's Day; and from other calendars (`Calendars.kt`, `CalendarsTest` against published
+  dates): Diwali, Holi, the Lunar New Year, the Mid-Autumn Festival, Ramadan, Eid al-Fitr and
+  Eid al-Adha ("eid" is both), Hanukkah, Passover, Rosh Hashanah, Yom Kippur. Those that follow
+  the moon use its new and full moons (Meeus, Astronomical Algorithms ch. 49: 2024's within a
+  minute of the almanacs): the Lunar New Year is the first new moon from 21 January by China's
+  date, the Mid-Autumn Festival the 15th day of the month holding 23 September, Diwali the new
+  moon ending the month in which the sun enters sidereal Libra (about 17 October), Holi the day
+  after the full moon of the month it enters sidereal Pisces (about 14 March); Islamic months
+  begin as Umm al-Qura's do, the day after a new moon before sunset in Mecca, else the day
+  after that (Ramadan 2022-2025 and both Eids exactly). The Hebrew calendar is its arithmetic
+  (Dershowitz and Reingold): Rosh Hashanah, Passover and Hanukkah agree with convertdate for every
+  year 1900-2100. Each takes its festival's days, with a day's leeway where countries keep it on
+  different days, and the evening before for those that begin at sunset. A Gregorian year can
+  hold two of an Islamic holiday. A word that is
   also an ordinary word (a month, season, holiday, weekday, a bare "90s") is a date only with
   something that makes it one ("last", "in", a year) or when it is the whole query: "christmas
   tree" searches for Christmas trees; "may" is never a date alone. Words leading into the phrase
