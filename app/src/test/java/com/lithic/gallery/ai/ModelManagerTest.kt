@@ -84,6 +84,29 @@ class ModelManagerTest {
         assertThat(failure()).isNotNull()
     }
 
+    private fun marker() = File(weights().path + ".verified")
+
+    @Test
+    fun aMarkerFromBeforeStampsIsTrustedNotRehashed() {
+        val size = models.sources.getValue(key).size.toInt()
+        copyIn(ByteArray(size), 1_000_000_000_000)
+        // What the app wrote before markers held the file's length and time: the hash alone.
+        marker().writeText(models.sources.getValue(key).sha256)
+        assertThat(ModelManager(context).state.value[key]).isEqualTo(ModelState.Ready)
+        assertThat(marker().readText()).startsWith(models.sources.getValue(key).sha256 + "\n")
+    }
+
+    @Test
+    fun anUnreadableMarkerIsNotTakenForAVerdict() = runBlocking {
+        val size = models.sources.getValue(key).size.toInt()
+        copyIn(ByteArray(size), 1_000_000_000_000)
+        marker().mkdirs() // a directory where the marker file goes
+        val fresh = ModelManager(context)
+        assertThat(fresh.state.value[key]).isEqualTo(ModelState.Verifying)
+        fresh.verifyCopied()
+        assertThat(fresh.state.value[key]).isInstanceOf(ModelState.Failed::class.java)
+    }
+
     @Test
     fun aCompleteCopyIsCheckedNotDownloaded() = runBlocking {
         val official = File("../tools/weights/$key/${models.sources.getValue(key).file}")

@@ -178,8 +178,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (started) return
         started = true
         viewModelScope.launch {
-            app.models.verifyCopied()
+            // The library first: checking copied models can take a while.
             app.repository.sync()
+            app.models.verifyCopied()
             val s = app.settings.current()
             Work.watchNewMedia(app, s.describeNewMedia)
             if (s.describeOnOpen && app.ai.ready(s)) Work.describe(app, userInitiated = false, s)

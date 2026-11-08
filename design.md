@@ -169,7 +169,8 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   HTTP download (Range), zip member extraction, SHA-256 check, `.verified` marker; files copied
   in without a marker are hashed by `verifyCopied` (app start and resume, and each worker run).
   The marker records the hash, length and modification time, so a file copied over a verified
-  one is checked again, and so is one copied over a file that failed its check. A download
+  one is checked again, and so is one copied over a file that failed its check (a marker from
+  before, the hash alone, is trusted once and rewritten; an unreadable one counts as none). A download
   checks a complete file in place before fetching (unless it failed already). A lock per model
   keeps checking, downloading and deleting off the same file; `verifyCopied` waits for a check
   in progress (its caller gets the verdict) and skips a model being downloaded. Any download

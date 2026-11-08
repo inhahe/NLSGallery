@@ -94,9 +94,25 @@ class ModelManager(private val context: Context) {
     }
 
     private fun verifiedAsIs(key: String): Boolean {
-        val marker = verifiedMarker(key)
         val s = stamp(key) ?: return false
-        return marker.exists() && marker.readText() == markerText(sources.getValue(key).sha256, s)
+        val sha = sources.getValue(key).sha256
+        val text = try {
+            verifiedMarker(key).takeIf { it.isFile }?.readText() ?: return false
+        } catch (e: IOException) {
+            return false // unreadable: not known to be verified
+        }
+        if (text == markerText(sha, s)) return true
+        // A marker from before markers held the file's stamp: the hash alone, written when the
+        // file was checked. Trusted once and brought up to date, rather than 1.2 GB hashed again.
+        if (text == sha) {
+            try {
+                verifiedMarker(key).writeText(markerText(sha, s))
+            } catch (e: IOException) {
+                // Left as it is: trusted again next time.
+            }
+            return true
+        }
+        return false
     }
 
     private fun markerText(sha: String, stamp: Pair<Long, Long>) = "$sha\n${stamp.first}\n${stamp.second}\n"
@@ -109,8 +125,13 @@ class ModelManager(private val context: Context) {
      */
     suspend fun verifyCopied() = withContext(Dispatchers.IO) {
         for (key in sources.keys) {
-            if (key in downloading) continue
-            locks.getValue(key).withLock {
+            val lock = locks.getValue(key)
+            if (!lock.tryLock()) {
+                // Held by a download (minutes: skipped) or a check or delete (waited for).
+                if (key in downloading) continue
+                lock.lock()
+            }
+            try {
                 val s = _state.value[key]
                 val look = when (s) {
                     ModelState.Missing -> true
@@ -120,6 +141,8 @@ class ModelManager(private val context: Context) {
                 }
                 if (look) set(key, initialState(key))
                 if (_state.value[key] == ModelState.Verifying) check(key)
+            } finally {
+                lock.unlock()
             }
         }
     }
