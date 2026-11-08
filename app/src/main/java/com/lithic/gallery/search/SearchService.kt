@@ -46,12 +46,16 @@ open class SearchService(
     private val byMedia = HashMap<Long, Doc>()
     private val byId = HashMap<Int, Doc>()
     private var nextId = 0
-    /** The embedded documents newest first, the order equally near ones keep; null after a change. */
+    /** The embedded documents in [newestFirst] order, which equally near ones keep; null after a change. */
     private var nearest: List<Pair<Int, FloatArray>>? = null
     private var embedder: MiniLmEmbedder? = null
 
-    /** Equal scores: newest first, then the larger media id, whatever order files were indexed in. */
-    private val tieBreak = compareByDescending<Int> { byId.getValue(it).date }.thenByDescending { byId.getValue(it).mediaId }
+    /**
+     * The order equal scores and equal meanings keep: newest first, then the larger media id. It is
+     * total, so the order files were indexed in never shows.
+     */
+    private val newestFirst = compareByDescending<Doc> { it.date }.thenByDescending { it.mediaId }
+    private val tieBreak = Comparator<Int> { a, b -> newestFirst.compare(byId.getValue(a), byId.getValue(b)) }
 
     /**
      * Refreshes run here, one at a time, so a search cancelled (the user typed on) leaves the
@@ -127,7 +131,7 @@ open class SearchService(
         }
         // A file deleted between the reads has no row: the next refresh, which its deletion
         // asked for, takes it out.
-        for (r in rows.sortedWith(compareByDescending<MediaWithDescription> { it.sortDate }.thenByDescending { it.id })) {
+        for (r in rows) {
             val doc = byMedia[r.id] ?: Doc(nextId++, r.id, 0, 0, null).also { byMedia[r.id] = it; byId[it.id] = it }
             index.add(doc.id, listOf(r.caption ?: "", r.ocr ?: "", r.manualCaption ?: "", r.displayName, r.relativePath + r.displayName))
             doc.signature = plan.changed.getValue(r.id)
@@ -160,7 +164,7 @@ open class SearchService(
         val queryVector = embedQuery(q)
         mutex.withLock {
             val near = nearest ?: byId.values.filter { it.vector != null }
-                .sortedWith(compareByDescending<Doc> { it.date }.thenByDescending { it.mediaId })
+                .sortedWith(newestFirst)
                 .map { it.id to it.vector!! }
                 .also { nearest = it }
             HybridSearch.search(q, index, fields, queryVector, near, tieBreak)
