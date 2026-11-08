@@ -38,9 +38,9 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   GPU against EasyOCR's) and `GpuProbe` (CRAFT's speed and memory on the GPU, shape by shape and
   sustained; logs only). Time the GPU on a warm phone: within a minute of load it reaches thermal
   status 1 and runs at about half its cool speed, which is what describing a library gets.
-- Emulator end to end: the `gallery_test` AVD (16 GB data), `tools/seed-emulator.sh --models`,
-  `tools/emu-search.sh "query" out.png` (refuses unless the gallery is in front, so keystrokes
-  never land in another app).
+- Emulator end to end: the `gallery_test` AVD (16 GB data), `tools/seed-emulator.sh --models`
+  (geotagged pictures included: "in paris", "hawaii"), `tools/emu-search.sh "query" out.png`
+  (refuses unless the gallery is in front, so keystrokes never land in another app).
 - One APK per ABI: phones take `app-arm64-v8a-*.apk`.
 - Release: `build-release.bat` (signed with the key `keystore.properties` names, kept in
   `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`).

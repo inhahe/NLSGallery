@@ -34,6 +34,7 @@ Without thumbsup2's environment, `requirements.txt` here lists what to install f
 | `push-test-data.bat [emulator]` | | the test images (files and PIL's pixels) and references onto the phone or the emulator, for the on-device tests |
 | `make_umm_al_qura.py` | any (hijridate) | prints the Umm al-Qura table's declarations for `LunarHolidays` in `core/.../search/Calendars.kt` (where it begins, how many months, `UMM_AL_QURA`): the month lengths 1365-1500 AH from hijridate's table (MIT) |
 | `make_calendar_reference.py` | any (lunardate, hijridate) | prints `CalendarsTest`'s `CHINESE` (every Lunar New Year and Mid-Autumn Festival 1900-2099, the Hong Kong Observatory's tables through lunardate) and `RAMADAN` (1 Ramadan 1365-1500 AH, Umm al-Qura) |
+| `make_geotagged.py` | any (Pillow, ffmpeg) | `testdata/geo/`: three test photos with EXIF GPS (Waikiki, the Eiffel Tower, Tokyo Tower) and a video tagged in Paris as phones tag theirs (`©xyz`), for place search; `seed-emulator.sh` makes and pushes them |
 | `make_places.py` | any | `app/src/main/assets/places.bin`: the gazetteer place search reads (GeoNames' places of 1000 people or more, their regions and countries, a few everyday country names), from `geonames/cities1000.zip`, `admin1CodesASCII.txt` and `countryInfo.txt` downloaded from https://download.geonames.org/export/dump/ (CC BY 4.0; `geonames/` is not in git). Run it again to take in GeoNames' changes |
 
 `testdata/` and `weights/` (~1.2 GB) are not in git; delete them when not testing.

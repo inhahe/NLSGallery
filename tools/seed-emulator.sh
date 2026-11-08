@@ -33,6 +33,11 @@ e push "$data/synth_document.png" "$data/synth_rotated_text.png" /sdcard/Downloa
 e push "$data/synth_meme.jpg" "$wa/WhatsApp Images/" >/dev/null
 e push "$data/video/anamorphic.mp4" "$wa/WhatsApp Video/" >/dev/null
 e push "$data/synth_sign.jpg" /sdcard/Pictures/Messages/ >/dev/null
+# Pictures that say where they were taken, for place search ("in paris", "hawaii").
+[ -f "$data/geo/geo_paris_video.mp4" ] || python "$here/make_geotagged.py"
+for f in "$data"/geo/*; do
+    e push "$f" /sdcard/DCIM/Camera/ >/dev/null
+done
 # Spread the camera photos over the year so dates and ordering show.
 e shell 'i=0; for f in /sdcard/DCIM/Camera/*; do i=$((i+1)); touch -d "2026-0$(( (i % 9) + 1 ))-1$(( i % 9 )) 1$(( i % 9 )):00:00" "$f"; done'
 e shell content call --uri content://media/ --method scan_volume --arg external_primary >/dev/null
