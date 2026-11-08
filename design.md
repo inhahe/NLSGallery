@@ -55,9 +55,12 @@ Deliberate differences from thumbsup2:
 - **Videos are described**: BLIP captions frames at 10%, 50% and 90% (distinct captions joined
   with "; "), EasyOCR reads the middle frame. thumbsup2 describes images only.
 - **Photos over ~16.8 MP are decoded subsampled** (by powers of two) to bound memory.
-- **Search by place** (a sixth keyword field, `place`, and a filter): thumbsup2 has neither.
-  Its five fields score as they did; a query that names no place gives thumbsup2's ranking
-  whenever the place field is off or matches nothing.
+- **Search by place**: a filter, and a place named in passing ranks the files taken there
+  higher (`HybridSearch.search`'s `favoured`: one more list fused by RRF among those found, in
+  their fused order; none added). thumbsup2 has neither. The index is thumbsup2's, and a query
+  that names no place the library has pictures from is ranked as thumbsup2 ranks it. Places are
+  not a keyword field: MiniSearch's prefix and fuzzy matching would make "car" find Carolina
+  and "whales" Wales.
 - **Text detail** (`TextDetail`): EasyOCR's detector works at up to 2560 px (its default, so
   thumbsup2's). On the phone (Snapdragon 8 Gen 1) CRAFT takes 8.5 s at 1280×960, 22 s at
   1920×1440 and 52 s at 2560×1920, so the default "Balanced" keeps 2560 for screenshots,
@@ -252,12 +255,11 @@ synced) and `MediaDetails`.
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.
-- `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's, then `place`: the
-  words of where it was taken, `Gazetteer.words`) plus the embeddings,
+- `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's) plus the embeddings,
   brought up to date by the first search after files or descriptions change (an open search
   reruns at most every 5 s while describing changes them every couple of seconds). A refresh
   reads every file's `SearchSignature` (key, name, folder, when its description was written,
-  which text its embedding is of, its location: a few dozen bytes), compares a 64-bit hash of it with what
+  which text its embedding is of: a few dozen bytes), compares a 64-bit hash of it with what
   it indexed, and reads text and embeddings only for the files that changed. A write during
   the reads changes the signature again, so the next refresh mends what this one read in
   between. Refreshes run one at a time in the service's own scope (a search cancelled by the
@@ -324,27 +326,41 @@ synced) and `MediaDetails`.
   `ExifInterface`, a video's ISO 6709 location tag; both need ACCESS_MEDIA_LOCATION and
   `MediaStore.setRequireOriginal`, without which Android blanks them, so nothing is read
   without it, and a scan without it forgets the locations read before: the user has withheld
-  them; 0,0 is a GPS without a fix). `core/places/Gazetteer` turns a point into words:
-  the nearest of GeoNames' places of 1000 people or more within 60 km (`places.bin`, 171,749
-  places, 5.4 MB, `tools/make_places.py`; a 1° grid, so a look-up reads a few hundred), its
-  admin1 region and country, and the most populous place within 30 km when it has 100,000
-  people or more (a suburb's pictures are its city's: Boulogne-Billancourt's are Paris's). The
-  gazetteer is read (about 15 MB) only once a file says where it was taken. `Places.snapshot`
-  holds each located file's place, and every name (normalized: lower case, accents and
-  punctuation gone) to the files taken there and to a label: the place, the city, the region,
-  the country, and the country's other names ("usa", "uk", "holland") where the library has
-  pictures from it; two places of one name read as the name. It is rebuilt every 10 s while a
-  large library is read, and the search index is invalidated with it. A query's place
-  (`core/search/PlacePhrases`) is read after its date and request, in what is left, among the
-  names the library has: the longest name (up to five words) that follows "in", "at", "near",
-  "from", "around", "to" or "visiting" (determiners between), or is the whole of what is left;
-  so "nice beach" is not Nice. It becomes a filter on the files taken there, with a chip and a
-  × (`dismissPlace`) as the date's. Without such a word a place's name still matches the
-  `place` field as a word. Settings → Search → *Places* shows whether the permission is given
-  and how many files say where; the app asks for it with the media permissions, once by itself
-  after an update (`Settings.locationAsked`), and again from there (the app's system settings
-  once Android no longer asks). The search fields chosen are saved with the fields there were
-  (`search_fields_known`), so a field added since starts out searched (`searchFieldsFrom`).
+  them; 0,0 is a GPS without a fix; a file that could not be read gets no row and is read
+  again next scan). `core/places/Gazetteer` turns a point into words: the nearest of GeoNames'
+  places of 1000 people or more within 60 km (`places.bin`, 171,749 places, 5.4 MB,
+  `tools/make_places.py`; a 1° grid, the cells a degree of latitude either side and as many of
+  longitude as 60 km spans there, so a look-up reads a few hundred and finds Longyearbyen's
+  places two cells away at 78° north), its admin1 region and country, and the most populous
+  place of the same country within 30 km when it has 100,000 people or more (a suburb's
+  pictures are its city's: Boulogne-Billancourt's are Paris's; El Paso's are not Ciudad
+  Juárez's), labelled with the city only when it is in the same region. The gazetteer is read
+  (about 15 MB) only once a file says where it was taken. `Places.snapshot` holds each located
+  file's place (files of the library only: `locations` keeps the rows of files gone, as
+  descriptions are kept), and every name (normalized: lower case, accents and punctuation gone)
+  to the files taken there and to a label (`PlacePhrases.Known`, which also says whether it
+  names a country): the place, the city, the region, the country, and the country's other
+  names ("usa", "uk", "holland") where the library has pictures from it; two places of one
+  name read as the name. It is brought up to date after every scan (every 10 s while a large
+  library is read), each file's place looked up once, and sent only when it changed.
+
+  A query is read (`core/search/SearchReading`, `SearchReadingTest`) for its date, then its
+  place in what is left (`PlacePhrases`), among the names the library has: the longest name
+  (up to five words) that follows "in", "at", "near", "from", "around", "to" or "visiting"
+  ("the" between only for a country: "in the uk"), or that has nothing with it but a request
+  and filler ("hawaii photos", "my trip to tokyo"); so "nice beach", "dinner in a nice
+  restaurant" and "in the nice weather" are not Nice. The words around it are read for a request
+  as a date's are ("videos in paris" asks for videos). A date phrase takes the "in" after it
+  ("beach last summer in hawaii" leaves "beach hawaii"), so with a date and no place the place
+  is read first and kept when the date still reads in what is left; a date that is one only on
+  its own ("christmas in paris") is read again once the place is out; and a month stays a month
+  over a town of its name ("in march"). The place becomes a filter on the files taken there,
+  with a chip and a × (`dismissPlace`) as the date's. A place named in passing ("beach hawaii",
+  `SearchReading.named`) ranks the files taken there higher among what the words find.
+  Settings → Search → *Places* shows whether the permission is given and how many files say
+  where; the app asks for it with the media permissions, once by itself after an update
+  (`Settings.locationAsked`), and again from there (the app's system settings once Android no
+  longer asks).
 
 ### Hardware
 

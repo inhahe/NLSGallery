@@ -29,6 +29,10 @@ object HybridSearch {
      * @param accept the documents that may be found (a date, a tab), or null for all. It narrows
      *   the candidates before they are ranked and cut, so the best 200 are the best among them.
      *   Keyword scores still weigh words by how common they are in the whole index.
+     * @param favoured the documents to rank higher (taken at a place the query names in
+     *   passing: "beach hawaii"), or null for none. Among those found they count as found by one
+     *   more list, fused as the others are, in the order fused so far; none is added. thumbsup2
+     *   has no such thing: without it the ranking is thumbsup2's.
      */
     fun search(
         query: String,
@@ -38,6 +42,7 @@ object HybridSearch {
         embeddings: Iterable<Pair<Int, FloatArray>>,
         tieBreak: Comparator<Int>? = null,
         accept: ((Int) -> Boolean)? = null,
+        favoured: ((Int) -> Boolean)? = null,
     ): List<Hit> {
         if (query.isBlank() || fields.isEmpty()) return emptyList()
         val bm25 = keyword.search(query, fields, tieBreak).let { all -> if (accept == null) all else all.filter { accept(it.id) } }.take(TOP)
@@ -52,7 +57,13 @@ object HybridSearch {
         for ((rank, s) in semantic.withIndex()) fused[s.first] = (fused[s.first] ?: 0.0) + 1.0 / (RRF_K + rank + 1)
         val keywordIds = bm25.mapTo(HashSet()) { it.id }
         val similarity = semantic.toMap()
-        return fused.entries.sortedByDescending { it.value }.take(LIMIT).map { (id, score) ->
+        var ranked = fused.entries.map { it.key to it.value }.sortedByDescending { it.second }
+        if (favoured != null) {
+            var rank = 0
+            ranked = ranked.map { (id, score) -> id to if (favoured(id)) score + 1.0 / (RRF_K + ++rank) else score }
+                .sortedByDescending { it.second }
+        }
+        return ranked.take(LIMIT).map { (id, score) ->
             Hit(id, score, id !in keywordIds && id in similarity, similarity[id])
         }
     }

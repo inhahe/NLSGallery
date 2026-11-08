@@ -153,8 +153,7 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
 
             Section("Search")
             Hint("Search looks in the AI description, the text in the picture, the file's own caption, its name and folder, as " +
-                "thumbsup2's search does, and in where it was taken: matching words (with typos and word starts) blended " +
-                "with matching meaning. " +
+                "thumbsup2's search does: matching words (with typos and word starts) blended with matching meaning. " +
                 "Add when (\"beach last summer\", \"dog 2023\", \"christmas\") to look among the pictures taken then, " +
                 "and where (\"beach in hawaii\", \"paris\") among those taken there.")
             PlacesRow(vm, s.locationAsked)

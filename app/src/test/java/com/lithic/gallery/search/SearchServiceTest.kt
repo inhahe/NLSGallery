@@ -14,7 +14,6 @@ import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.EmbeddingEntity
 import com.lithic.gallery.data.GalleryDatabase
-import com.lithic.gallery.data.LocationEntity
 import com.lithic.gallery.data.MediaEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -28,7 +27,7 @@ import kotlin.math.sqrt
 /**
  * The search index kept up to date change by change gives what one built afresh from the same
  * database gives, through descriptions made and reset, files added, moved, renamed, redated and
- * deleted, failures recorded, places found. Embeddings are a function of the text (as MiniLM's are), so equal
+ * deleted, failures recorded. Embeddings are a function of the text (as MiniLM's are), so equal
  * captions tie in meaning; dates tie too (bursts, copies); and the query's embedding is given, so
  * meaning is ranked too.
  */
@@ -48,10 +47,7 @@ class SearchServiceTest {
     /** describedAt as the app writes it: later at every write. */
     private var clock = 1L
 
-    private inner class Service : SearchService(
-        db.ai(), ModelManager(context), { error("no tokenizer in this test") },
-        placeWords = { lat, _ -> PLACES[lat.toInt()] },
-    ) {
+    private inner class Service : SearchService(db.ai(), ModelManager(context), { error("no tokenizer in this test") }) {
         override suspend fun embedQuery(text: String): FloatArray = topics[abs(text.hashCode()) % topics.size]
     }
 
@@ -108,7 +104,7 @@ class SearchServiceTest {
         val all = media.values.toList()
         val m = all[rng.nextInt(all.size)]
         val d = db.ai().description(m.aiKey)
-        when (rng.nextInt(11)) {
+        when (rng.nextInt(10)) {
             // Captioned (often the same words as another file, so meanings tie).
             0, 1 -> if (d == null) describe(m.aiKey, if (rng.nextInt(4) == 0) "a cat on a table" else phrase(3 + rng.nextInt(4)), null)
             // Its text read.
@@ -121,17 +117,12 @@ class SearchServiceTest {
             7 -> add(m.copy(displayName = "renamed_${m.id}.jpg", aiKey = "renamed${m.id}"))
             8 -> { nextDate += 1000; add(m.copy(sortDate = nextDate)) }
             9 -> if (d == null) db.ai().upsertDescription(DescriptionEntity(m.aiKey, null, null, "", clock++, "unreadable"))
-            // Where it was taken read (now and then read again, somewhere else).
-            10 -> db.media().upsertLocations(listOf(LocationEntity(m.aiKey, rng.nextInt(PLACES.size) + 0.5, 10.0)))
         }
     }
 
-    private val queries = listOf("cat", "cat table", "beach sunset", "receipt total", "img", "camera", "scre", "mesage", "river night",
-        "paris", "beach hawaii")
+    private val queries = listOf("cat", "cat table", "beach sunset", "receipt total", "img", "camera", "scre", "mesage", "river night")
     private val fieldSets = listOf(
-        SearchService.FIELDS,
         HybridSearch.FIELDS,
-        listOf(SearchService.PLACE),
         listOf(HybridSearch.AI_CAPTION, HybridSearch.AI_OCR),
         listOf(HybridSearch.FILENAME, HybridSearch.PATH),
     )
@@ -153,7 +144,7 @@ class SearchServiceTest {
         val kept = Service()
         var matched = 0
         for (round in 1..25) {
-            for (q in queries) kept.search(q, SearchService.FIELDS)
+            for (q in queries) kept.search(q, HybridSearch.FIELDS)
             repeat(1 + rng.nextInt(40)) { someChange() }
             kept.invalidate()
             val fresh = Service()
@@ -166,12 +157,9 @@ class SearchServiceTest {
         // The comparison had something to compare, by words and by meaning.
         assertThat(matched).isGreaterThan(5000)
         assertThat(Service().search("cat", HybridSearch.FIELDS).count { it.semanticOnly }).isGreaterThan(0)
-        assertThat(Service().search("hawaii", listOf(SearchService.PLACE))).isNotEmpty()
     }
 
     private companion object {
         const val DIM = 384
-        /** What the files taken at latitudes 0, 1 and 2 are found by. */
-        val PLACES = listOf("paris france", "honolulu hawaii united states", "tokyo japan")
     }
 }

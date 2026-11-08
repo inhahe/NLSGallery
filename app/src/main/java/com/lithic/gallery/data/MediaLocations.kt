@@ -19,8 +19,12 @@ object MediaLocations {
     fun allowed(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-    /** Where [item] was taken, (latitude, longitude), or null when it does not say (or cannot be read). */
-    fun read(context: Context, item: MediaEntity): Pair<Double, Double>? {
+    /**
+     * Where [item] was taken, as its row in `locations` (latitude and longitude null when it does
+     * not say), or null when it could not be read (an I/O error, a card taken out, the permission
+     * taken back meanwhile): no row, so it is read again next time.
+     */
+    fun read(context: Context, item: MediaEntity): LocationEntity? {
         val uri = MediaStore.setRequireOriginal(item.contentUri)
         val at = try {
             if (item.isVideo) {
@@ -29,14 +33,16 @@ object MediaLocations {
                     parseIso6709(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_LOCATION))
                 }
             } else {
-                context.contentResolver.openInputStream(uri)?.use { ExifInterface(it).latLong }?.let { it[0] to it[1] }
+                val stream = context.contentResolver.openInputStream(uri) ?: return null
+                stream.use { ExifInterface(it).latLong }?.let { it[0] to it[1] }
             }
         } catch (e: Exception) {
-            Log.i("MediaLocations", "no location read from ${item.displayName}: $e")
-            null
+            Log.i("MediaLocations", "could not read where ${item.displayName} was taken: $e")
+            return null
         }
         // 0, 0 is where a GPS that has no fix puts pictures, not the Gulf of Guinea.
-        return at?.takeIf { (lat, lon) -> lat in -90.0..90.0 && lon in -180.0..180.0 && !(lat == 0.0 && lon == 0.0) }
+        val valid = at?.takeIf { (lat, lon) -> lat in -90.0..90.0 && lon in -180.0..180.0 && !(lat == 0.0 && lon == 0.0) }
+        return LocationEntity(item.aiKey, valid?.first, valid?.second)
     }
 
     /** "+37.4220-122.0841/" (ISO 6709, as videos store it) as (latitude, longitude). */

@@ -4,24 +4,31 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.text.Normalizer
 import java.util.Locale
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sqrt
 
 /**
  * Where a point on Earth is, in words: the nearest populated place of a thousand people or more
- * (GeoNames), its region and country, and the biggest city near it, since a suburb's pictures
- * are the city's too. Read from places.bin (tools/make_places.py).
+ * (GeoNames), its region and country, and the biggest city near it in the same country, since a
+ * suburb's pictures are the city's too. Read from places.bin (tools/make_places.py).
  */
 class Gazetteer(bytes: ByteArray) {
     /**
      * Where a picture was taken: [name] the nearest place, its [region] (a state, a province) and
-     * [country], and [city] the biggest city within [CITY_KM], of [BIG_CITY] people or more (none
-     * when that is [name] itself, or none is near).
+     * [country], and [city] the biggest city of the country within [CITY_KM], of [BIG_CITY] people
+     * or more (none when that is [name] itself, or none is near), in [cityRegion].
      */
-    data class Place(val name: String, val region: String?, val country: String, val city: String?) {
-        /** "Honolulu, Hawaii, United States". */
-        val label: String get() = listOfNotNull(name, city, region?.takeIf { it != name && it != city }, country).joinToString(", ")
+    data class Place(val name: String, val region: String?, val country: String, val city: String?, val cityRegion: String? = null) {
+        /**
+         * "Honolulu, Hawaii, United States"; "Boulogne-Billancourt, Paris, Île-de-France, France",
+         * but the city left out when it is in another region (Jersey City's New York City).
+         */
+        val label: String get() {
+            val c = city?.takeIf { cityRegion == region }
+            return listOfNotNull(name, c, region?.takeIf { it != name && it != c }, country).joinToString(", ")
+        }
 
         /** The names it is found by, from the narrowest. */
         val names: List<String> get() = listOfNotNull(name, city, region, country).distinct()
@@ -90,29 +97,34 @@ class Gazetteer(bytes: ByteArray) {
     /** Where ([latitude], [longitude]) is, or null when no place is within [MAX_KM] (at sea, in a wilderness). */
     fun place(latitude: Double, longitude: Double): Place? {
         val nearest = within(latitude, longitude, MAX_KM).minByOrNull { it.second }?.first ?: return null
-        val city = within(latitude, longitude, CITY_KM).maxByOrNull { population[it.first] }?.first
+        // Over a border is another country's city (El Paso is not Ciudad Juárez).
+        val city = within(latitude, longitude, CITY_KM).filter { country[it.first] == country[nearest] }
+            .maxByOrNull { population[it.first] }?.first
             ?.takeIf { it != nearest && population[it] >= BIG_CITY }
-        val r = region[nearest].takeIf { it != 0xFFFF }
-        return Place(strings[name[nearest]], r?.let { strings[regionName[it]] }, strings[countryName[country[nearest]]],
-            city?.let { strings[name[it]] })
+        return Place(strings[name[nearest]], regionOf(nearest), strings[countryName[country[nearest]]],
+            city?.let { strings[name[it]] }, city?.let(::regionOf))
     }
+
+    private fun regionOf(place: Int): String? = region[place].takeIf { it != 0xFFFF }?.let { strings[regionName[it]] }
 
     /** Names of countries GeoNames does not use ("usa", "holland"), normalized, to the name it does. */
     val countryAliases: Map<String, String> get() = aliasOf
 
-    private val aliasesOf: Map<String, List<String>> = aliasOf.entries.groupBy({ it.value }, { it.key })
-
-    /** The words [p] is found by in a keyword search: its names and its country's other names. */
-    fun words(p: Place): String = (p.names + aliasesOf[p.country].orEmpty()).joinToString(" ")
-
-    /** The places within [km] of a point (at most a degree away: [MAX_KM] is less), with how far each is. */
+    /**
+     * The places within [km] of a point, with how far each is: from the cells a degree of latitude
+     * either side (more than [km]), and as many of longitude as [km] spans there (one near the
+     * equator, three at 78° north, all of them at the pole).
+     */
     private fun within(latitude: Double, longitude: Double, km: Double): List<Pair<Int, Double>> {
+        require(km < KM_PER_DEGREE) { "$km km is more than a degree of latitude" }
         val cosLat = cos(Math.toRadians(latitude))
         val out = ArrayList<Pair<Int, Double>>()
         val la = floor(latitude).toInt()
         val lo = floor(longitude).toInt()
-        for (dla in -1..1) for (dlo in -1..1) {
-            val places = cells[cell(la + dla, lo + dlo)] ?: continue
+        val reach = ceil(km / (KM_PER_DEGREE * cosLat)).let { if (it < 180) it.toInt() else 180 }
+        val lons = if (2 * reach + 1 >= 360) -180 until 180 else lo - reach..lo + reach
+        for (dla in -1..1) for (l in lons) {
+            val places = cells[cell(la + dla, l)] ?: continue
             for (i in places) {
                 var dLon = lon[i] - longitude
                 if (dLon > 180) dLon -= 360 else if (dLon < -180) dLon += 360
@@ -144,7 +156,11 @@ class Gazetteer(bytes: ByteArray) {
 
         /** [s] as names are matched: lower case, accents and punctuation gone ("Saint-Étienne" is "saint etienne"). */
         fun normalize(s: String): String =
-            Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
-                .lowercase(Locale.ROOT).replace(Regex("[-'’.,()]"), " ").replace(Regex("\\s+"), " ").trim()
+            Normalizer.normalize(s, Normalizer.Form.NFD).replace(MARKS, "")
+                .lowercase(Locale.ROOT).replace(PUNCTUATION, " ").replace(SPACES, " ").trim()
+
+        private val MARKS = Regex("\\p{M}+")
+        private val PUNCTUATION = Regex("[-'’.,()]")
+        private val SPACES = Regex("\\s+")
     }
 }

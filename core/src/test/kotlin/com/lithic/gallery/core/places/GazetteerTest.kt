@@ -36,6 +36,26 @@ class GazetteerTest {
     }
 
     @Test
+    fun citiesAreTheirCountrysAndLabelledInTheirRegion() {
+        // El Paso: Ciudad Juárez, bigger and 5 km away, is Mexico's.
+        val elPaso = gazetteer.place(31.7619, -106.4850)!!
+        assertThat(elPaso.names).doesNotContain("Ciudad Juárez")
+        assertThat(elPaso.country).isEqualTo("United States")
+        // Jersey City (Journal Square): found by New York City, which is in another state, so not
+        // labelled with it.
+        val jersey = gazetteer.place(40.7328, -74.0631)!!
+        assertThat(jersey.names).containsAtLeast("Jersey City", "New York City", "New Jersey")
+        assertThat(jersey.label).isEqualTo("Jersey City, New Jersey, United States")
+        assertThat(gazetteer.place(48.8352, 2.2410)!!.label).isEqualTo("Boulogne-Billancourt, Paris, Île-de-France, France")
+    }
+
+    @Test
+    fun farNorthPlacesAreFoundEastAndWest() {
+        // At 78° north a degree of longitude is 23 km: Longyearbyen, 37 km west, is two cells away.
+        assertThat(gazetteer.place(78.22, 17.3)?.name).isEqualTo("Longyearbyen")
+    }
+
+    @Test
     fun nothingFarFromAnyPlace() {
         assertThat(gazetteer.place(0.0, -140.0)).isNull() // the middle of the Pacific
         assertThat(gazetteer.place(0.0, 0.0)).isNull() // "null island", where a broken GPS puts pictures

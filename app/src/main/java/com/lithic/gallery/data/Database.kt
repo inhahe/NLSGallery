@@ -132,9 +132,6 @@ data class SearchSignature(
     val relativePath: String,
     val describedAt: Long?,
     val textHash: String?,
-    /** Where it was taken, once read ([LocationEntity]): a file located since is indexed again. */
-    val lat: Double?,
-    val lon: Double?,
 )
 
 /**
@@ -160,8 +157,6 @@ data class MediaWithDescription(
     val caption: String?,
     val ocr: String?,
     val manualCaption: String?,
-    val lat: Double?,
-    val lon: Double?,
 )
 
 @Dao
@@ -198,8 +193,11 @@ interface MediaDao {
     @Query("DELETE FROM locations")
     suspend fun forgetLocations(): Int
 
-    /** Every location read that says somewhere. */
-    @Query("SELECT * FROM locations WHERE lat IS NOT NULL AND lon IS NOT NULL")
+    /** Where the library's files were taken: every location read that says somewhere, of a file still there. */
+    @Query(
+        """SELECT * FROM locations l WHERE l.lat IS NOT NULL AND l.lon IS NOT NULL
+           AND EXISTS (SELECT 1 FROM media m WHERE m.aiKey = l.hash)"""
+    )
     suspend fun locations(): List<LocationEntity>
 }
 
@@ -359,27 +357,24 @@ interface AiDao {
 
     @Query(
         """SELECT m.id, m.displayName, m.relativePath, m.sortDate, m.isVideo, m.aiKey,
-                  d.caption, d.ocr, d.manualCaption, l.lat, l.lon
-           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
-           LEFT JOIN locations l ON l.hash = m.aiKey"""
+                  d.caption, d.ocr, d.manualCaption
+           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey"""
     )
     suspend fun searchable(): List<MediaWithDescription>
 
     /** [searchable] for media [ids] (at most 900 at a time). */
     @Query(
         """SELECT m.id, m.displayName, m.relativePath, m.sortDate, m.isVideo, m.aiKey,
-                  d.caption, d.ocr, d.manualCaption, l.lat, l.lon
-           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
-           LEFT JOIN locations l ON l.hash = m.aiKey WHERE m.id IN (:ids)"""
+                  d.caption, d.ocr, d.manualCaption
+           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey WHERE m.id IN (:ids)"""
     )
     suspend fun searchable(ids: List<Long>): List<MediaWithDescription>
 
     /** Every file's [SearchSignature], with the text hash of its [model] embedding. */
     @Query(
-        """SELECT m.id, m.aiKey, m.sortDate, m.displayName, m.relativePath, d.describedAt, e.textHash, l.lat, l.lon
+        """SELECT m.id, m.aiKey, m.sortDate, m.displayName, m.relativePath, d.describedAt, e.textHash
            FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
-           LEFT JOIN ai_embeddings e ON e.hash = m.aiKey AND e.model = :model
-           LEFT JOIN locations l ON l.hash = m.aiKey"""
+           LEFT JOIN ai_embeddings e ON e.hash = m.aiKey AND e.model = :model"""
     )
     suspend fun searchSignatures(model: String): List<SearchSignature>
 

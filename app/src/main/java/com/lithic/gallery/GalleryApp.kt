@@ -43,7 +43,6 @@ class GalleryApp : Application(), SingletonImageLoader.Factory {
         SearchService(
             db.ai(), models, { ai.tokenizer },
             meaningAllowed = { ai.allowed(settings.current()) },
-            placeWords = { lat, lon -> gazetteer.place(lat, lon)?.let(gazetteer::words) },
         )
     }
 

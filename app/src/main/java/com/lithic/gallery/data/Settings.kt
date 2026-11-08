@@ -10,7 +10,6 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.lithic.gallery.core.ai.easyocr.EasyOcr
 import com.lithic.gallery.core.search.HybridSearch
-import com.lithic.gallery.search.SearchService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -78,24 +77,11 @@ data class Settings(
     val weakPhoneNoticeShown: Boolean = false,
 
     // Search
-    /** The fields words are looked for in ([SearchService.FIELDS]). */
-    val searchFields: Set<String> = SearchService.FIELDS.toSet(),
+    val searchFields: Set<String> = HybridSearch.FIELDS.toSet(),
     /** The permission to read where photos were taken was asked for (the app asks once by itself; Settings again). */
     val locationAsked: Boolean = false,
     val searchCurrentTabOnly: Boolean = false,
 )
-
-/**
- * The fields searched, from the choice saved ([stored], comma-separated; null when none was) and
- * the fields there were when it was ([known]; null before that was kept: thumbsup2's). A field
- * added since starts out searched.
- */
-internal fun searchFieldsFrom(stored: String?, known: String?): Set<String>? {
-    stored ?: return null
-    val then = known?.split(',') ?: HybridSearch.FIELDS
-    return (stored.split(',') + SearchService.FIELDS.filter { it !in then }).filter { it in SearchService.FIELDS }.toSet()
-        .ifEmpty { null }
-}
 
 class SettingsStore(private val context: Context) {
     private val store: DataStore<Preferences> get() = context.dataStore
@@ -127,7 +113,6 @@ class SettingsStore(private val context: Context) {
             p[AI_ON_WEAK_PHONE] = s.aiOnWeakPhone
             p[WEAK_PHONE_NOTICE] = s.weakPhoneNoticeShown
             p[SEARCH_FIELDS] = s.searchFields.joinToString(",")
-            p[SEARCH_FIELDS_KNOWN] = SearchService.FIELDS.joinToString(",")
             p[LOCATION_ASKED] = s.locationAsked
             p[SEARCH_TAB_ONLY] = s.searchCurrentTabOnly
         }
@@ -155,7 +140,7 @@ class SettingsStore(private val context: Context) {
             gpuText = p[GPU_TEXT] ?: d.gpuText,
             aiOnWeakPhone = p[AI_ON_WEAK_PHONE] ?: d.aiOnWeakPhone,
             weakPhoneNoticeShown = p[WEAK_PHONE_NOTICE] ?: d.weakPhoneNoticeShown,
-            searchFields = searchFieldsFrom(p[SEARCH_FIELDS], p[SEARCH_FIELDS_KNOWN]) ?: d.searchFields,
+            searchFields = p[SEARCH_FIELDS]?.split(',')?.filter { it in HybridSearch.FIELDS }?.toSet() ?: d.searchFields,
             locationAsked = p[LOCATION_ASKED] ?: d.locationAsked,
             searchCurrentTabOnly = p[SEARCH_TAB_ONLY] ?: d.searchCurrentTabOnly,
         )
@@ -183,8 +168,6 @@ class SettingsStore(private val context: Context) {
         val AI_ON_WEAK_PHONE = booleanPreferencesKey("ai_on_weak_phone")
         val WEAK_PHONE_NOTICE = booleanPreferencesKey("weak_phone_notice_shown")
         val SEARCH_FIELDS = stringPreferencesKey("search_fields")
-        /** The fields there were when [SEARCH_FIELDS] was saved (thumbsup2's, before this was kept). */
-        val SEARCH_FIELDS_KNOWN = stringPreferencesKey("search_fields_known")
         val LOCATION_ASKED = booleanPreferencesKey("location_asked")
         val SEARCH_TAB_ONLY = booleanPreferencesKey("search_current_tab_only")
     }

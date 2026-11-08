@@ -56,7 +56,7 @@ the text found in the picture), share, move to trash, and Edit / Open with anoth
 
 Type in the search field to find pictures by what is in them ("dog on a beach", "receipt",
 "birthday cake"), by text visible in them (signs, screenshots, documents), by their own
-caption, file name or folder, and by where they were taken. Search finds matching words, also with typos and word starts, and
+caption, file name or folder, and by where they were taken (see *Places*). Search finds matching words, also with typos and word starts, and
 pictures whose description *means* what you typed even with different words; the two are
 blended as in thumbsup2. A dot on a thumbnail marks a result found by meaning alone. Chips under
 the search field choose where to look, and can limit results to the current tab.
@@ -76,16 +76,18 @@ start on its first day of the week, and 3/5/2024 is read in its order. Words tha
 ordinary words are dates only when something says so: "christmas tree" looks for Christmas
 trees, "last christmas" for pictures from last Christmas, and "may" alone is never a date.
 
-**Places.** Say where: "beach in hawaii", "paris", "photos from japan", "trip to rome last
-summer", "sunset in honolulu". Photos and videos keep where they were taken (their GPS), which
-NLSGallery turns into the town, the big city near it, the state or province and the country, so
-any of those names finds them, and countries also by everyday names ("usa", "uk", "holland").
-The search then looks only among the pictures taken there; a place on its own lists them all. A
-chip shows the place it was taken to be ("Hawaii, United States"); tap it to search for those
-words instead. Only places the library has pictures from count, and a name that is also an
-ordinary word ("nice", "reading") is a place only after "in", "at", "near", "from", "to" or
-"around", or on its own: "nice beach" looks for nice beaches. Without those words a place still
-finds its pictures as a matching word ("Place" chip), among the other words. Android hides where
+**Places.** Say where: "beach in hawaii", "paris", "photos from japan", "my trip to rome",
+"videos in tokyo last summer", "sunset in honolulu". Photos and videos keep where they were
+taken (their GPS), which NLSGallery turns into the town, the big city near it, the state or
+province and the country, so any of those names finds them, and countries also by everyday
+names ("usa", "uk", "holland"). The search then looks only among the pictures taken there; a
+place on its own lists them all. A chip shows the place it was taken to be ("Hawaii, United
+States"); tap it to search for those words instead. Only places the library has pictures from
+count, and a name that is also an ordinary word ("nice", "reading") is a place only after "in",
+"at", "near", "from", "to" or "around", or with nothing else but words like "photos", "my" or
+"trip": "nice beach" and "dinner in a nice restaurant" look for nice things. A place named
+without those words ("beach hawaii") puts the pictures taken there first among what the other
+words find. Android hides where
 pictures were taken unless the app is allowed to read it, which it asks once (Settings → Search
 → *Places* asks again, and says how many pictures say where they were taken); taking the
 permission away in Android's settings makes NLSGallery forget what it read. Pictures with no

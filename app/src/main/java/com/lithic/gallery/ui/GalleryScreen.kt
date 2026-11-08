@@ -86,10 +86,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.core.search.HybridSearch
+import com.lithic.gallery.core.search.SearchReading
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.LayoutMode
-import com.lithic.gallery.search.SearchService
 import kotlin.math.roundToInt
 
 fun Category.label(): String = when (this) {
@@ -118,7 +118,6 @@ private val FIELD_LABELS = mapOf(
     HybridSearch.CAPTION to "Own caption",
     HybridSearch.FILENAME to "File name",
     HybridSearch.PATH to "Folder",
-    SearchService.PLACE to "Place",
 )
 
 /** The tabs, the thumbnails, search, and the AI button. */
@@ -450,7 +449,7 @@ private fun SearchChips(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (words) for (f in SearchService.FIELDS) {
+            if (words) for (f in HybridSearch.FIELDS) {
                 FilterChip(selected = f in fields, onClick = { onToggle(f) }, label = { Text(FIELD_LABELS.getValue(f), fontSize = 12.sp) })
             }
             // In the All tab there is nothing to keep a search to.

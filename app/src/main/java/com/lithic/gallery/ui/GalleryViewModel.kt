@@ -12,8 +12,9 @@ import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
 import com.lithic.gallery.core.search.DatePhrases
+import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.core.search.PlacePhrases
-import com.lithic.gallery.core.search.QueryRequest
+import com.lithic.gallery.core.search.SearchReading
 import com.lithic.gallery.data.Categories
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
@@ -48,19 +49,6 @@ import java.util.Locale
 
 /** A search result shown in the grid: how it was found, or no [result] when it was listed for its date alone. */
 data class SearchHit(val item: MediaEntity, val result: SearchService.Result?)
-
-/**
- * A search query as read: [text] as typed, the [date] and [place] read in it, the [words] to
- * search for (the query itself unless a date, a place or a request was taken out; empty when
- * nothing is left, and every file allowed is listed), [videosOnly] when it asks for videos.
- */
-data class SearchReading(
-    val text: String,
-    val date: DatePhrases.DateQuery?,
-    val place: PlacePhrases.PlaceQuery?,
-    val words: String,
-    val videosOnly: Boolean,
-)
 
 /** What the AI button shows. */
 data class AiStatus(
@@ -145,30 +133,26 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val today = MutableStateFlow(LocalDate.now())
 
     /** What a query is read with: whether its date and its place were dismissed, the day, the places known. */
-    private data class ReadingInput(val q: String, val dateOff: Boolean, val placeOff: Boolean, val day: LocalDate, val known: Map<String, String>)
+    private data class ReadingInput(
+        val q: String,
+        val dateOff: Boolean,
+        val placeOff: Boolean,
+        val day: LocalDate,
+        val known: Map<String, PlacePhrases.Known>,
+    )
 
     /** The settled query as read: its date and place unless dismissed, and its request ("show me videos of"). */
     val reading: StateFlow<SearchReading> =
-        combine(settledQuery, dateDismissed, placeDismissed, today, app.places.snapshot.map { it.labels }) { q, dd, pd, day, known ->
+        combine(settledQuery, dateDismissed, placeDismissed, today, app.places.snapshot.map { it.names }) { q, dd, pd, day, known ->
             ReadingInput(q, q.isNotBlank() && q == dd, q.isNotBlank() && q == pd, day, known)
         }
             .distinctUntilChanged()
-            .map { read(it) }
+            .map { r ->
+                val dates = if (r.dateOff) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault())
+                SearchReading.read(r.q, dates, r.known, r.placeOff)
+            }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, SearchReading("", null, null, "", false))
-
-    /**
-     * What a query asks for: the date read in it, then the place (among the places the library
-     * has pictures from) in what is left, the words to search for, the kind.
-     */
-    private fun read(r: ReadingInput): SearchReading {
-        val q = r.q
-        if (q.isBlank()) return SearchReading(q, null, null, "", false)
-        val date = if (r.dateOff) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q)
-        val (rest, videosOnly) = date?.let { it.text to it.videosOnly } ?: QueryRequest.strip(q).let { it.text to it.videosOnly }
-        val place = if (r.placeOff) null else PlacePhrases.parse(rest, r.known)
-        return SearchReading(q, date, place, place?.text ?: rest, videosOnly)
-    }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, SearchReading.EMPTY)
 
     /**
      * Searches for the words of the date phrase shown instead (the × on its chip); not when the
@@ -219,14 +203,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      * the search it reruns.
      *
      * A date in the query narrows the search to the files taken then, a place to those taken
-     * there, "videos" to videos, "Only in this tab" to the tab. With no words left to search for
-     * ("last summer", "in paris", "show me videos"), every file allowed is listed, newest first,
-     * which needs no descriptions.
+     * there, "videos" to videos, "Only in this tab" to the tab; a place named in passing ("beach
+     * hawaii") ranks those taken there higher. With no words left to search for ("last summer",
+     * "in paris", "show me videos"), every file allowed is listed, newest first, which needs no
+     * descriptions.
      */
     val searchResults: StateFlow<List<SearchHit>?> =
         combine(
             reading, settings, searchScope, allMedia.onEach { app.search.invalidate() },
-            combine(indexVersion, app.places.snapshot.onEach { app.search.invalidate() }) { _, places -> places },
+            combine(indexVersion, app.places.snapshot) { _, places -> places },
         ) { q, s, tab, all, places ->
             SearchInput(q, s, tab, all, places)
         }.mapLatest { input ->
@@ -248,8 +233,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
             if (q.words.isBlank()) return@mapLatest allowed.map { SearchHit(it, null) }
             val byId = allowed.associateBy { it.id }
-            val fields = SearchService.FIELDS.filter { it in s.searchFields }
-            app.search.search(q.words, fields) { id -> id in byId }
+            val fields = HybridSearch.FIELDS.filter { it in s.searchFields }
+            val named = q.named.flatMapTo(HashSet()) { input.places.keys[it].orEmpty() }
+            app.search.search(q.words, fields, accept = { id -> id in byId }, favoured = { id: Long -> byId[id]?.aiKey in named }.takeIf { named.isNotEmpty() })
                 .mapNotNull { r -> byId[r.mediaId]?.let { SearchHit(it, r) } }
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
