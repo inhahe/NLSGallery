@@ -22,6 +22,7 @@ import com.lithic.gallery.GalleryApp
 import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.core.ai.embeddingText
+import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.R
 import com.lithic.gallery.data.MediaScanner
@@ -162,11 +163,10 @@ object Work {
  * them it makes the embeddings MiniLM failed to make (milliseconds each). Each file is saved as it
  * finishes, so stopping loses at most the one in progress.
  *
- * Model failures are told apart per pass ([ModelFailureTracker]): a file the models fail on while
- * they describe others of the same pass is counted (once a run, see
- * [AiEngine.recordModelFailure]); a pass whose models fail on file after file gives up, blaming
- * none, and the run is retried later. Files the models failed on come last in every pass, so they
- * cannot hold up the rest. MiniLM failing is never a file's.
+ * Each pass tells files the models fail on from models failing ([DescribePass], probing with
+ * [AiEngine.modelsStillWork]); a file is counted at most once a run ([AiEngine.recordModelFailure]).
+ * Files the models failed on come last in every pass. When a pass finds the models failing, the
+ * run stops and is retried later.
  */
 class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -176,7 +176,7 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         if (!app.ai.ready(s)) return Result.success()
         app.repository.sync()
         val dao = app.db.ai()
-        suspend fun unembedded() = dao.withoutEmbedding(MiniLmEmbedder.MODEL_ID)
+        suspend fun unembedded() = dao.withoutEmbedding(MiniLmEmbedder.MODEL_ID, DescriptionEntity.MAX_MODEL_FAILURES)
             .filter { embeddingText(it.caption ?: "", it.ocr ?: "") != null }
         val embedFirst = unembedded()
         val captionPass = if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false) else emptyList()
@@ -184,13 +184,14 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         var total = embedFirst.size + captionPass.size + textPass.size
         if (total == 0) return Result.success()
         val user = inputData.getBoolean(Work.KEY_USER, false)
+        val firstPhase = if (embedFirst.isNotEmpty()) "embeddings" else if (captionPass.isNotEmpty()) "captions" else "text"
         // A notification for any run worth watching. From the background Android may refuse a
         // foreground service; then this runs as an ordinary job (limited to ten minutes, and
         // resumed by the next trigger).
         var foreground = false
         if (user || total > 3) {
             foreground = try {
-                setForeground(Work.describeNotification(applicationContext, id, 0, total)); true
+                setForeground(Work.describeNotification(applicationContext, id, 0, total, firstPhase)); true
             } catch (e: IllegalStateException) {
                 Log.i(TAG, "not in the foreground: ${e.message}"); false
             }
@@ -207,54 +208,48 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             setProgress(workDataOf(Work.KEY_DONE to done, Work.KEY_TOTAL to total, Work.KEY_PHASE to phase))
             if (foreground) setForeground(Work.describeNotification(applicationContext, id, done, total, phase))
         }
-        // A file counts once a run, whichever passes the models failed on it in.
+        // A description counts once a run, whichever passes the models failed on it in.
         val counted = HashSet<String>()
-        suspend fun blame(files: List<Pair<MediaEntity, String>>) {
-            for ((item, message) in files) if (counted.add(item.aiKey)) app.ai.recordModelFailure(item, message)
+        suspend fun count(key: String, message: String, describing: Boolean) {
+            if (counted.add(key)) app.ai.recordModelFailure(key, message, describing)
         }
+        fun describing(part: AiEngine.Part, phase: String) = DescribePass<MediaEntity>(
+            attempt = { app.ai.describe(it, s, captions = part == AiEngine.Part.CAPTIONS, ocr = part == AiEngine.Part.TEXT) },
+            probe = { app.ai.modelsStillWork(part, it, s) },
+            blame = { files -> for ((item, message) in files) count(item.aiKey, message, describing = true) },
+            // If it was memory, what closing the models gives back is there for the next file.
+            afterFailure = { app.ai.release() },
+            progress = { progress(phase) },
+        )
+        val embedding = DescribePass<DescriptionEntity>(
+            attempt = { app.ai.embedMissing(it, s) },
+            probe = { app.ai.modelsStillWork(AiEngine.Part.EMBEDDINGS, null, s) },
+            blame = { files -> for ((d, message) in files) count(d.hash, message, describing = false) },
+            afterFailure = { app.ai.release() },
+            progress = { progress("embeddings") },
+        )
 
-        /** One pass over [items]; false if it gave up, its models failing on everything. */
-        suspend fun <T> pass(items: List<T>, phase: String, blameFiles: (suspend (List<Pair<T, String>>) -> Unit)?,
-                             attempt: suspend (T) -> AiEngine.Outcome): Boolean {
-            val failures = ModelFailureTracker<T>()
-            for (item in items) {
-                if (isStopped) return true
-                when (val outcome = attempt(item)) {
-                    AiEngine.Outcome.Described -> failures.modelsWorked().let { blameFiles?.invoke(it) }
-                    is AiEngine.Outcome.ModelsFailed -> {
-                        failures.modelsFailed(item, outcome.message)
-                        // If it was memory, the next file gets what closing the models gives back.
-                        app.ai.release()
-                    }
-                    else -> {}
-                }
-                progress(phase)
-                if (failures.shouldGiveUp) {
-                    Log.w(TAG, "the models fail on every file of the $phase pass just now; it is tried again later")
-                    failures.gaveUp()
-                    return false
-                }
-            }
-            failures.finished().let { blameFiles?.invoke(it) }
-            return true
-        }
-
-        var gaveUp = false
         try {
-            gaveUp = !pass(embedFirst, "embeddings", null) { app.ai.embedMissing(it, s) }
-            gaveUp = !pass(captionPass, "captions", ::blame) { app.ai.describe(it, s, captions = true, ocr = false) } || gaveUp
-            gaveUp = !pass(textPass, "text", ::blame) { app.ai.describe(it, s, captions = false, ocr = true) } || gaveUp
-            // Those whose embedding MiniLM failed to make in this run (not those just tried).
-            val tried = embedFirst.mapTo(HashSet()) { it.hash }
-            val embedAfter = unembedded().filter { it.hash !in tried }
-            total += embedAfter.size
-            gaveUp = !pass(embedAfter, "embeddings", null) { app.ai.embedMissing(it, s) } || gaveUp
+            val stop = { isStopped }
+            var end = embedding.run(embedFirst, stop)
+            if (end == DescribePass.End.Done) end = describing(AiEngine.Part.CAPTIONS, "captions").run(captionPass, stop)
+            if (end == DescribePass.End.Done) end = describing(AiEngine.Part.TEXT, "text").run(textPass, stop)
+            if (end == DescribePass.End.Done && !isStopped) {
+                // Those whose embedding MiniLM failed to make in this run (not those just tried).
+                val tried = embedFirst.mapTo(HashSet()) { it.hash }
+                val embedAfter = unembedded().filter { it.hash !in tried }
+                total += embedAfter.size
+                end = embedding.run(embedAfter, stop)
+            }
+            if (end == DescribePass.End.ModelsFailing) {
+                Log.w(TAG, "the models fail even on what they handled before; describing again later")
+                return Result.retry()
+            }
         } finally {
             app.ai.release()
             app.search.invalidate()
         }
-        if (isStopped) return Result.success()
-        return if (gaveUp) Result.retry() else Result.success()
+        return Result.success()
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo =

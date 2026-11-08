@@ -212,17 +212,40 @@ interface AiDao {
     }
 
     /**
-     * Descriptions of files in the library with no [model] embedding: MiniLM failed when they were
-     * saved, or they have no text (the caller tells which, as embedding does).
+     * Descriptions of files in the library with text but no [model] embedding (MiniLM failed when
+     * they were saved), but those MiniLM failed on [maxFailures] times. The text test here is a
+     * cheap first cut (SQLite trims only spaces); the caller applies the exact one.
      */
     @Query(
         """SELECT d.* FROM ai_descriptions d
            LEFT JOIN ai_embeddings e ON e.hash = d.hash AND e.model = :model
-           WHERE d.error IS NULL AND e.hash IS NULL
+           WHERE d.error IS NULL AND e.hash IS NULL AND d.modelFailures < :maxFailures
              AND EXISTS (SELECT 1 FROM media m WHERE m.aiKey = d.hash)
-             AND (d.caption IS NOT NULL OR d.ocr IS NOT NULL)"""
+             AND (TRIM(COALESCE(d.caption, '')) != '' OR TRIM(COALESCE(d.ocr, '')) != '')"""
     )
-    suspend fun withoutEmbedding(model: String): List<DescriptionEntity>
+    suspend fun withoutEmbedding(model: String, maxFailures: Int): List<DescriptionEntity>
+
+    /**
+     * A picture (a video when [video]) whose caption the models made, the latest: what the caption
+     * models are tried on again to see whether they still work.
+     */
+    @Query(
+        """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
+           WHERE d.caption IS NOT NULL AND d.error IS NULL AND m.isVideo = :video
+           ORDER BY d.describedAt DESC LIMIT 1"""
+    )
+    suspend fun captionedReference(video: Boolean): MediaEntity?
+
+    /**
+     * A picture (a video when [video]) whose text the models read, from [folder] (so read at the
+     * same detail) if there is one, the latest: what the text models are tried on again.
+     */
+    @Query(
+        """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
+           WHERE d.ocr IS NOT NULL AND d.error IS NULL AND m.isVideo = :video
+           ORDER BY m.folder = :folder DESC, d.describedAt DESC LIMIT 1"""
+    )
+    suspend fun readReference(folder: Int, video: Boolean): MediaEntity?
 
     /**
      * Embedding [e] saved only if its description is still the text [of] it was made from (not
@@ -238,27 +261,33 @@ interface AiDao {
         return true
     }
 
-    /** The models failed on file [hash] at [at], whoever's fault it was. */
+    /**
+     * The models failed on file [hash] at [at], whoever's fault it was; [manual] is its own
+     * caption, read before they ran, kept so it is searched meanwhile.
+     */
     @Transaction
-    suspend fun noteModelFailure(hash: String, at: Long) {
+    suspend fun noteModelFailure(hash: String, manual: String, at: Long) {
         val d = description(hash)
         if (d?.error != null) return
-        upsertDescription(d?.copy(lastModelFailure = at) ?: DescriptionEntity(hash, null, null, "", at, null, 0, at))
+        upsertDescription(
+            d?.copy(manualCaption = manual, describedAt = at, lastModelFailure = at)
+                ?: DescriptionEntity(hash, null, null, manual, at, null, 0, at)
+        )
     }
 
     /**
-     * Counts a run in which the models failed on file [hash] while they worked for others of the
-     * same pass; the [max]th sets it aside as failed with [message].
+     * Counts a run in which the models failed on description [hash] while they worked on other
+     * input; with [setAside], the [max]th sets it aside as failed with [message]. A describing
+     * failure ([noted]) counts only while it is current: no part made, nor the description reset,
+     * since it was noted.
      */
     @Transaction
-    suspend fun countModelFailure(hash: String, message: String, at: Long, max: Int) {
-        val d = description(hash)
-        if (d?.error != null) return
-        val n = (d?.modelFailures ?: 0) + 1
-        val error = if (n >= max) "the AI failed on it $n times: $message" else null
-        upsertDescription(
-            (d ?: DescriptionEntity(hash, null, null, "", at, null)).copy(describedAt = at, error = error, modelFailures = n, lastModelFailure = at)
-        )
+    suspend fun countModelFailure(hash: String, message: String, at: Long, max: Int, setAside: Boolean, noted: Boolean) {
+        val d = description(hash) ?: return
+        if (d.error != null || (noted && d.lastModelFailure == null)) return
+        val n = d.modelFailures + 1
+        val error = if (setAside && n >= max) "the AI failed on it $n times: $message" else null
+        upsertDescription(d.copy(describedAt = at, error = error, modelFailures = n))
     }
 
     /**

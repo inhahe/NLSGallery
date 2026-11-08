@@ -190,21 +190,26 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   the file failing (or running out of memory reading it) is the file's fault: the error is
   saved, unless the file cannot be opened at all just now (deleted, card removed), which leaves
   it for the next run. Opening or running the models failing (running out of memory included,
-  the image being bounded by then; one `modelWork` wrapper) makes nothing and notes the time
-  (`noteModelFailure`). Whose fault it is shows over each pass of the run
-  (`ModelFailureTracker` in `DescribeWorker`): if the same pass then describes another file,
-  the models work for its kind of input, and the failure is the file's and counted
-  (`recordModelFailure`, once a run; the third sets it aside). Six failures with none described
-  between say the models fail on everything just now (memory, say): the pass gives up, blaming
-  none, and the run is retried later. Files the models failed on come last in every pass, so
-  files that always fail cannot hold one up: the next run tries the others first, and their
-  success is the evidence. Any part made resets the count. The models are closed after each
-  failure, giving back their memory. MiniLM failing is never the file's (its input is text):
-  the description is saved without an embedding (any older one, of other text, removed with
-  it), and an embedding pass before and after the describing passes (`AiDao.withoutEmbedding`,
-  `embedMissing`) makes it; it gives up on MiniLM failing like any pass, blaming no file. A
-  file on record as failed is skipped, so the text pass does not retry what the caption pass
-  just failed on (`DescribeFailureTest`).
+  the image being bounded by then; one `modelWork` wrapper) makes nothing and notes the time,
+  keeping the file's own caption so it is searched meanwhile (`noteModelFailure`). Whose fault
+  it is shows over each pass of the run (`DescribePass`, tested in `DescribePassTest`): a file
+  the models failed on is a suspect, blamed (counted, `recordModelFailure`, at most once a run;
+  the third sets it aside) once the models are seen to work on that pass's input. The pass
+  describing another file shows it; so does a probe (`modelsStillWork`), run when six failures
+  come with none described between or a pass ends with suspects: the same models on a real file
+  they handled before, of the same kind (photo or video, and for text the same folder, so read
+  at the same detail), or, for MiniLM, text of the most it reads. If the probe fails too, or
+  there is nothing to probe on, the models are failing just now (memory, say): the run stops,
+  blaming none, and is retried later. A count applies only while the failure is current (no
+  part made, nor the description reset, since it was noted); any part made resets it. Files the
+  models failed on come last in every pass, so files that always fail cannot hold one up. The
+  models are closed after each failure, giving back their memory. MiniLM failing is never the
+  file's (its input is text): the description is saved without an embedding (any older one, of
+  other text, removed with it), and an embedding pass before and after the describing passes
+  (`AiDao.withoutEmbedding`, `embedMissing`) makes it; MiniLM failures are counted like the
+  others, but only stop the description being tried (after three), never set it aside. A file on
+  record as failed is skipped, so the text pass does not retry what the caption pass just failed
+  on (`DescribeFailureTest`).
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.

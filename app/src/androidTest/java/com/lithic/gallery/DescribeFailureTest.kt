@@ -115,6 +115,44 @@ class DescribeFailureTest {
     }
 
     @Test
+    fun aPartMadeResetsTheCount() = runBlocking {
+        val key = "describe-failure-test-reset-count-${System.nanoTime()}"
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "describe-failure-test.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)!!
+        try {
+            resolver.openOutputStream(uri)!!.use { out ->
+                android.graphics.Bitmap.createBitmap(64, 48, android.graphics.Bitmap.Config.ARGB_8888)
+                    .compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+            }
+            // The models failed on it in an earlier run, and it was counted.
+            dao.noteModelFailure(key, "", 1L)
+            app.ai.recordModelFailure(key, "boom", describing = true)
+            assertThat(dao.description(key)!!.modelFailures).isEqualTo(1)
+            assertThat(app.ai.describe(item(uri, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Described)
+            val d = dao.description(key)!!
+            assertThat(d.caption).isNotNull()
+            assertThat(d.modelFailures).isEqualTo(0)
+            assertThat(d.lastModelFailure).isNull()
+        } finally {
+            resolver.delete(uri, null, null)
+            dao.forget(key)
+        }
+    }
+
+    @Test
+    fun theProbesFindTheModelsWorking() = runBlocking {
+        // The emulator's photos have captions, so there is a picture to try the caption models on.
+        assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
+        assertThat(app.ai.modelsStillWork(AiEngine.Part.EMBEDDINGS, null, captionsOnly)).isTrue()
+    }
+
+    @Test
     fun aFileThatCannotBeDecodedIsRecordedAsFailed() = runBlocking {
         val key = "describe-failure-test-corrupt-${System.nanoTime()}"
         val resolver = context.contentResolver

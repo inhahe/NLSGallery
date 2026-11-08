@@ -55,8 +55,8 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         /** It could not be read (or ran out of memory being read): saved as failed. */
         data object Failed : Outcome
         /**
-         * The models failed on it: nothing made, the time noted. Whose fault it was shows over the
-         * run (see [recordModelFailure]).
+         * The models failed on it and made nothing ([describe] also notes the time on the file).
+         * Whose fault it was shows over the run (see [recordModelFailure]).
          */
         data class ModelsFailed(val message: String) : Outcome
     }
@@ -161,7 +161,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             }
             when (made) {
                 is Attempt.Failed -> {
-                    dao.noteModelFailure(item.aiKey, writeTime())
+                    dao.noteModelFailure(item.aiKey, manual, writeTime())
                     Outcome.ModelsFailed(made.message)
                 }
                 is Attempt.Done -> {
@@ -193,7 +193,6 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      */
     suspend fun embedMissing(d: DescriptionEntity, s: Settings): Outcome = mutex.withLock {
         withContext(Dispatchers.Default) {
-            if (embeddingText(d.caption ?: "", d.ocr ?: "") == null) return@withContext Outcome.Skipped
             when (val e = modelWork("a missing embedding") { open(captions = false, ocr = false, s); embed(d.hash, d.caption ?: "", d.ocr ?: "") }) {
                 is Attempt.Failed -> Outcome.ModelsFailed(e.message)
                 is Attempt.Done -> {
@@ -206,11 +205,56 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     }
 
     /**
-     * Counts a run in which the models failed on [item] while they worked for other files of the
-     * same pass; the [DescriptionEntity.MAX_MODEL_FAILURES]th sets it aside as failed with [message].
+     * Counts a run in which the models failed on description [key] while they worked on other
+     * input. A describing failure (one [describe] noted) counts only while it is current, and the
+     * [DescriptionEntity.MAX_MODEL_FAILURES]th sets the file aside as failed with [message]; an
+     * embedding failure ([describing] false) never sets it aside (its description is fine), but
+     * stops it being tried after as many.
      */
-    suspend fun recordModelFailure(item: MediaEntity, message: String) = mutex.withLock {
-        dao.countModelFailure(item.aiKey, message, writeTime(), DescriptionEntity.MAX_MODEL_FAILURES)
+    suspend fun recordModelFailure(key: String, message: String, describing: Boolean) = mutex.withLock {
+        dao.countModelFailure(key, message, writeTime(), DescriptionEntity.MAX_MODEL_FAILURES,
+            setAside = describing, noted = describing)
+    }
+
+    /** What a pass's models are run on: captions, the text in pictures, or embeddings of text. */
+    enum class Part { CAPTIONS, TEXT, EMBEDDINGS }
+
+    /**
+     * Whether the models for [part] still work on input they handled before, like [like] (a file
+     * they just failed on): the latest file of its kind (photo or video, and for text, its folder,
+     * so read at the same detail) whose [part] they made; for embeddings, text as long as MiniLM
+     * reads. Null when there is no such file. Nothing is saved.
+     */
+    suspend fun modelsStillWork(part: Part, like: MediaEntity?, s: Settings): Boolean? = mutex.withLock {
+        withContext(Dispatchers.Default) {
+            val reference = when (part) {
+                Part.CAPTIONS -> dao.captionedReference(like?.isVideo ?: false)
+                Part.TEXT -> dao.readReference(like?.folder ?: 0, like?.isVideo ?: false)
+                Part.EMBEDDINGS -> null
+            }
+            if (part != Part.EMBEDDINGS && reference == null) return@withContext null
+            val frames = if (reference == null) emptyList() else try {
+                if (reference.isVideo) MediaDecoding.decodeVideoFrames(context, reference.contentUri, VIDEO_FRAMES)
+                else listOf(MediaDecoding.decodeImage(context.contentResolver, reference.contentUri))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                return@withContext null // the reference itself is gone or unreadable: no answer
+            } catch (e: OutOfMemoryError) {
+                return@withContext false
+            }
+            val ran = modelWork("the ${part.name.lowercase()} probe") {
+                when (part) {
+                    Part.CAPTIONS -> { open(captions = true, ocr = false, s); frames.forEach { blip!!.caption(it) } }
+                    Part.TEXT -> {
+                        open(captions = false, ocr = true, s)
+                        easyOcr!!.canvasSize = s.textDetail.canvasFor(reference!!.folderCategory, reference.isVideo)
+                        easyOcr!!.text(frames[frames.size / 2])
+                    }
+                    Part.EMBEDDINGS -> { open(captions = false, ocr = false, s); minilm!!.embed(PROBE_TEXT) }
+                }
+            }
+            ran is Attempt.Done
+        }
     }
 
     /**
@@ -273,6 +317,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     companion object {
         private const val TAG = "AiEngine"
+        /** Text that fills MiniLM's 256 tokens, the most it reads: as heavy as any description. */
+        private val PROBE_TEXT = List(300) { "photograph" }.joinToString(" ")
+
         /** Where in a video its frames are captioned: a tenth, half and nine tenths in. */
         val VIDEO_FRAMES = listOf(0.1, 0.5, 0.9)
 
