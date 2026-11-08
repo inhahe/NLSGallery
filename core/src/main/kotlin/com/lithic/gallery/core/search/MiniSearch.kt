@@ -148,9 +148,10 @@ class MiniSearch(val fields: List<String>) {
         for (f in fieldIds) {
             val docs = data[f] ?: continue
             val matching = docs.size
+            val avgLength = totalFieldLength[f].toDouble() / documentCount
             for ((doc, freq) in docs) {
                 val len = fieldLength[doc]!![f]
-                val score = weight * bm25(freq, matching, documentCount, len, totalFieldLength[f].toDouble() / documentCount)
+                val score = weight * bm25(freq, matching, documentCount, len, avgLength)
                 val r = results[doc]
                 if (r != null) {
                     r.score += score

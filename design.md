@@ -69,6 +69,10 @@ Deliberate differences from thumbsup2:
   3 strips, 1.4× the work). `CraftTilingTest`: with a 256 px margin the score maps are
   identical to running whole (difference 0.0) on all 42 test images cut once or twice, so the
   text is too; with 192 px two images read differently, with 128 px three.
+- **Keyword scores use a field's exact mean length**, not MiniSearch's running average, whose
+  last bits depend on the order documents were added and removed in: the app's index changes
+  file by file, and must score the same as one built afresh. Scores agree with thumbsup2's to
+  about 1e-15 (`MiniSearchTest`); only scores tied to that precision could order differently.
 - **Meaning-only results need cosine similarity ≥ 0.2** (`SearchService.MIN_SIMILARITY`).
   thumbsup2 always lists its 200 nearest embeddings, so every query would "match" a whole small
   library; MiniLM scores related captions 0.3-0.6, unrelated ones ~0.1. Order is unchanged.
