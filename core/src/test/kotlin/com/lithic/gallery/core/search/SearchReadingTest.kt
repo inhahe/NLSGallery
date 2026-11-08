@@ -62,6 +62,9 @@ class SearchReadingTest {
         assertRead("last summer in hawaii", "hawaii", "", date = true)
         assertRead("christmas in paris", "paris", "", date = true)
         assertRead("videos from last summer in tokyo", "tokyo", "", videos = true, date = true)
+        // Words like "trip" are filler beside a date too.
+        assertRead("vacation last summer", null, "", date = true)
+        assertRead("my trip last summer to tokyo", "tokyo", "", date = true)
     }
 
     @Test

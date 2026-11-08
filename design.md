@@ -327,7 +327,7 @@ synced) and `MediaDetails`.
   `MediaStore.setRequireOriginal`, without which Android blanks them, so nothing is read
   without it, and a scan without it forgets the locations read before: the user has withheld
   them; 0,0 is a GPS without a fix; a file that could not be read gets no row and is read
-  again next scan). `core/places/Gazetteer` turns a point into words: the nearest of GeoNames'
+  again when the app next starts, not at every scan, since most stay unreadable). `core/places/Gazetteer` turns a point into words: the nearest of GeoNames'
   places of 1000 people or more within 60 km (`places.bin`, 171,749 places, 5.4 MB,
   `tools/make_places.py`; a 1° grid, the cells a degree of latitude either side and as many of
   longitude as 60 km spans there, so a look-up reads a few hundred and finds Longyearbyen's
@@ -337,11 +337,14 @@ synced) and `MediaDetails`.
   Juárez's), labelled with the city only when it is in the same region. The gazetteer is read
   (about 15 MB) only once a file says where it was taken. `Places.snapshot` holds each located
   file's place (files of the library only: `locations` keeps the rows of files gone, as
-  descriptions are kept), and every name (normalized: lower case, accents and punctuation gone)
+  descriptions are kept), how many files say where (some nowhere near a place, which Settings
+  counts), and every name (normalized: lower case, accents and punctuation gone, apostrophes
+  dropped as in typing: "st johns")
   to the files taken there and to a label (`PlacePhrases.Known`, which also says whether it
   names a country): the place, the city, the region, the country, and the country's other
   names ("usa", "uk", "holland") where the library has pictures from it; two places of one
-  name read as the name. It is brought up to date after every scan (every 10 s while a large
+  name read as the name as GeoNames writes it (Holland, Michigan and the Netherlands' "holland"
+  read "Holland"). It is brought up to date after every scan (every 10 s while a large
   library is read), each file's place looked up once, and sent only when it changed.
 
   A query is read (`core/search/SearchReading`, `SearchReadingTest`) for its date, then its
@@ -356,7 +359,11 @@ synced) and `MediaDetails`.
   its own ("christmas in paris") is read again once the place is out; and a month stays a month
   over a town of its name ("in march"). The place becomes a filter on the files taken there,
   with a chip and a × (`dismissPlace`) as the date's. A place named in passing ("beach hawaii",
-  `SearchReading.named`) ranks the files taken there higher among what the words find.
+  `SearchReading.named`) ranks the files taken there higher among what the words find, with a
+  chip of its own ("Hawaii, United States first") whose × ranks without it: the name may be a
+  word ("nice beach"), and no list of words tells which. Words left beside a date or a place
+  that are nothing to search for ("my trip", "photos of me") are one list,
+  `QueryRequest.FILLER`.
   Settings → Search → *Places* shows whether the permission is given and how many files say
   where; the app asks for it with the media permissions, once by itself after an update
   (`Settings.locationAsked`), and again from there (the app's system settings once Android no

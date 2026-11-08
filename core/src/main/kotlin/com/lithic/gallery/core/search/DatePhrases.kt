@@ -567,7 +567,7 @@ class DatePhrases(
         private val LEAD_IN = setOf("in", "on", "from", "during", "at", "around", "taken", "shot", "of")
 
         /** Words that, left on their own, are nothing to search for: "pictures of me from last summer". */
-        private val FILLER = LEAD_IN + QueryRequest.PICTURE_WORDS + QueryRequest.VERBS + QueryRequest.DETERMINERS + "me"
+        private val FILLER = LEAD_IN + QueryRequest.FILLER
 
 
         /**

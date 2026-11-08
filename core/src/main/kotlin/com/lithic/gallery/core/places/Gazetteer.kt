@@ -96,9 +96,10 @@ class Gazetteer(bytes: ByteArray) {
 
     /** Where ([latitude], [longitude]) is, or null when no place is within [MAX_KM] (at sea, in a wilderness). */
     fun place(latitude: Double, longitude: Double): Place? {
-        val nearest = within(latitude, longitude, MAX_KM).minByOrNull { it.second }?.first ?: return null
+        val near = within(latitude, longitude, MAX_KM)
+        val nearest = near.minByOrNull { it.second }?.first ?: return null
         // Over a border is another country's city (El Paso is not Ciudad Juárez).
-        val city = within(latitude, longitude, CITY_KM).filter { country[it.first] == country[nearest] }
+        val city = near.filter { it.second < CITY_KM && country[it.first] == country[nearest] }
             .maxByOrNull { population[it.first] }?.first
             ?.takeIf { it != nearest && population[it] >= BIG_CITY }
         return Place(strings[name[nearest]], regionOf(nearest), strings[countryName[country[nearest]]],
@@ -154,13 +155,18 @@ class Gazetteer(bytes: ByteArray) {
 
         private const val KM_PER_DEGREE = 111.195
 
-        /** [s] as names are matched: lower case, accents and punctuation gone ("Saint-Étienne" is "saint etienne"). */
+        /**
+         * [s] as names are matched: lower case, accents and punctuation gone ("Saint-Étienne" is
+         * "saint etienne"), apostrophes without a space, as they are left out in typing ("St.
+         * John's" is "st johns").
+         */
         fun normalize(s: String): String =
             Normalizer.normalize(s, Normalizer.Form.NFD).replace(MARKS, "")
-                .lowercase(Locale.ROOT).replace(PUNCTUATION, " ").replace(SPACES, " ").trim()
+                .lowercase(Locale.ROOT).replace(APOSTROPHES, "").replace(PUNCTUATION, " ").replace(SPACES, " ").trim()
 
         private val MARKS = Regex("\\p{M}+")
-        private val PUNCTUATION = Regex("[-'’.,()]")
+        private val APOSTROPHES = Regex("['’`]")
+        private val PUNCTUATION = Regex("[-.,()]")
         private val SPACES = Regex("\\s+")
     }
 }

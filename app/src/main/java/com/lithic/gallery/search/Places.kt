@@ -23,15 +23,17 @@ class Places(private val context: Context, private val dao: MediaDao, private va
     /**
      * The library's places: [placeOf] each located file's place (by AI key), [names] each
      * normalized name they go by ("hawaii": "Hawaii, United States"), [keys] each name to the
-     * files taken there.
+     * files taken there, [located] how many files say where they were taken (some nowhere near
+     * a place: at sea, in a wilderness).
      */
     class Snapshot(
         val placeOf: Map<String, Gazetteer.Place>,
         val names: Map<String, PlacePhrases.Known>,
         val keys: Map<String, Set<String>>,
+        val located: Int,
     )
 
-    private val _snapshot = MutableStateFlow(Snapshot(emptyMap(), emptyMap(), emptyMap()))
+    private val _snapshot = MutableStateFlow(Snapshot(emptyMap(), emptyMap(), emptyMap(), 0))
     val snapshot: StateFlow<Snapshot> = _snapshot
     private val mutex = Mutex()
     private var built = false
@@ -45,22 +47,29 @@ class Places(private val context: Context, private val dao: MediaDao, private va
     private val normalized = HashMap<String, String>()
 
     /**
+     * The files whose location could not be read since the app started (by AI key): read again
+     * at the next start, not at every scan, since most stay unreadable (a damaged video). Under
+     * [mutex].
+     */
+    private val unreadable = HashSet<String>()
+
+    /**
      * Reads the locations of the files not read yet (newest first), and keeps [snapshot] up to
      * date with the library: every few seconds while a large one is read, so its places come in
      * as they are found, and after the files changed. A file that could not be read is read
-     * again next time. Without the permission to read them, the locations read before are
-     * forgotten: the user has withheld where the pictures were taken.
+     * again when the app next starts. Without the permission to read them, the locations read
+     * before are forgotten: the user has withheld where the pictures were taken.
      */
     suspend fun scan() = mutex.withLock {
         if (!MediaLocations.allowed(context)) {
             if (dao.forgetLocations() > 0) placeByKey.clear()
         } else withContext(Dispatchers.IO) {
-            val todo = dao.withoutLocation()
+            val todo = dao.withoutLocation().filter { it.aiKey !in unreadable }
             val started = SystemClock.elapsedRealtime()
             var shownAt = started
             var located = 0
             for (chunk in todo.chunked(SCAN_CHUNK)) {
-                val rows = chunk.mapNotNull { MediaLocations.read(context, it) }
+                val rows = chunk.mapNotNull { item -> MediaLocations.read(context, item).also { if (it == null) unreadable.add(item.aiKey) } }
                 dao.upsertLocations(rows)
                 located += rows.count { it.lat != null }
                 if (SystemClock.elapsedRealtime() - shownAt > SHOW_EVERY_MS) {
@@ -87,11 +96,15 @@ class Places(private val context: Context, private val dao: MediaDao, private va
             val p = if (l.hash in placeByKey) placeByKey[l.hash] else g.place(lat, lon).also { placeByKey[l.hash] = it }
             if (p != null) placeOf[l.hash] = p
         }
-        if (built && placeOf == _snapshot.value.placeOf) return@withContext
+        val count = located.size
+        if (built && placeOf == _snapshot.value.placeOf && count == _snapshot.value.located) return@withContext
         val names = HashMap<String, PlacePhrases.Known>()
         val keys = HashMap<String, MutableSet<String>>()
+        // Each normalized name as GeoNames writes it, for a label shared by two places.
+        val written = HashMap<String, String>()
         fun add(name: String, label: String, key: String, country: Boolean = false) {
             val n = normalized.getOrPut(name) { Gazetteer.normalize(name) }
+            written[n] = name
             keys.getOrPut(n) { HashSet() }.add(key)
             // Two places of one name (Paris, France and Paris, Texas) read as the name alone.
             names.merge(n, PlacePhrases.Known(label, country)) { a, b ->
@@ -108,11 +121,12 @@ class Places(private val context: Context, private val dao: MediaDao, private va
         if (placeOf.isNotEmpty()) for ((alias, country) in g.countryAliases) {
             val files = keys[normalized.getOrPut(country) { Gazetteer.normalize(country) }] ?: continue
             keys.getOrPut(alias) { HashSet() }.addAll(files)
+            // A town of that name too (Holland, Michigan): both, by the town's name as written.
             names.merge(alias, PlacePhrases.Known(country, country = true)) { a, b ->
-                PlacePhrases.Known(if (a.label == b.label) a.label else alias, true)
+                PlacePhrases.Known(if (a.label == b.label) a.label else written[alias] ?: country, a.country || b.country)
             }
         }
-        _snapshot.value = Snapshot(placeOf, names, keys)
+        _snapshot.value = Snapshot(placeOf, names, keys, count)
         built = true
     }
 

@@ -64,7 +64,9 @@ class GazetteerTest {
     @Test
     fun namesAreMatchedWithoutAccentsOrPunctuation() {
         assertThat(Gazetteer.normalize("Île-de-France")).isEqualTo("ile de france")
-        assertThat(Gazetteer.normalize("St. John's")).isEqualTo("st john s")
+        // As typed, with the apostrophe or without.
+        assertThat(Gazetteer.normalize("St. John's")).isEqualTo("st johns")
+        assertThat(Gazetteer.normalize("st johns")).isEqualTo("st johns")
         assertThat(gazetteer.countryAliases["usa"]).isEqualTo("United States")
         assertThat(gazetteer.countryAliases["holland"]).isEqualTo("The Netherlands")
         assertThat(gazetteer.countryAliases["netherlands"]).isEqualTo("The Netherlands")

@@ -101,7 +101,10 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
                         "very slow, and Android may close the app (or others) while it works.",
                     s.aiOnWeakPhone) { v ->
                     set { it.copy(aiOnWeakPhone = v) }
-                    if (!v) vm.stopDescribing()
+                    if (!v) {
+                        vm.stopDescribing()
+                        vm.cancelDownload()
+                    }
                 }
             }
             Row(Modifier.fillMaxWidth().clickable(onClick = onModels).padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -189,11 +192,12 @@ private fun PlacesRow(vm: GalleryViewModel, asked: Boolean) {
     Row(Modifier.fillMaxWidth().clickable(enabled = !allowed, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(Modifier.weight(1f)) {
             Text("Places")
-            val n = places.placeOf.size
+            val n = places.located
             Text(
                 when {
                     !allowed -> "Android hides where photos were taken: tap to allow the app to read it, to search by place"
                     n == 0 -> "None of the photos read so far say where they were taken"
+                    n == 1 -> "1 photo or video says where it was taken"
                     else -> "$n photos and videos say where they were taken"
                 },
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

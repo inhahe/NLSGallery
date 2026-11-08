@@ -81,8 +81,7 @@ object PlacePhrases {
     private val LEAD_IN = setOf("in", "at", "near", "from", "around", "to", "visiting")
 
     /** Words that say nothing a picture taken there could be searched for by: "my trip to rome". */
-    private val FILLER = LEAD_IN + QueryRequest.PICTURE_WORDS + QueryRequest.VERBS + QueryRequest.DETERMINERS +
-        setOf("me", "of", "taken", "shot", "trip", "trips", "vacation", "vacations", "holiday", "holidays", "visit", "travel", "travels")
+    private val FILLER = LEAD_IN + QueryRequest.FILLER
 
     /** The longest name looked for, in words ("rio de janeiro", "bosnia and herzegovina"). */
     private const val MAX_WORDS = 5

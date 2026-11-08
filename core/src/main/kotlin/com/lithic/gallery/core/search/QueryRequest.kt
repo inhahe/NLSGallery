@@ -74,6 +74,14 @@ object QueryRequest {
     internal val PICTURE_WORDS = setOf("photo", "photos", "picture", "pictures", "pic", "pics", "image", "images", "shots")
     internal val VIDEO_WORDS = setOf("video", "videos")
     internal val PREPOSITIONS = setOf("of", "from", "with", "showing", "taken", "shot", "in", "on", "at", "during", "around")
+
+    /**
+     * Words that, left on their own beside a date or a place, are nothing to search for:
+     * "pictures of me from last summer", "my trip to rome" ([DatePhrases] and [PlacePhrases] add
+     * the words that lead into their phrases).
+     */
+    internal val FILLER = PICTURE_WORDS + VERBS + DETERMINERS +
+        setOf("me", "of", "taken", "shot", "trip", "trips", "vacation", "vacations", "holiday", "holidays", "visit", "travel", "travels")
     /** After "videos", only what says when or what they show: "video on youtube" is a screenshot's words. */
     internal val VIDEO_PREPOSITIONS = setOf("of", "from", "showing", "taken", "shot", "during")
 

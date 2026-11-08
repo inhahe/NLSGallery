@@ -65,6 +65,8 @@ class PlacesTest {
         val s = places.snapshot.value
 
         assertThat(s.placeOf.keys).containsExactly("waikiki", "eiffel", "texas")
+        // Four say where they were taken, one of them nowhere near a place.
+        assertThat(s.located).isEqualTo(4)
         assertThat(s.keys.getValue("hawaii")).containsExactly("waikiki")
         assertThat(s.keys.getValue("honolulu")).containsExactly("waikiki")
         assertThat(s.names.getValue("hawaii")).isEqualTo(PlacePhrases.Known("Hawaii, United States"))
@@ -77,6 +79,16 @@ class PlacesTest {
         assertThat(s.keys.getValue("paris")).containsExactly("eiffel", "texas")
         assertThat(s.names.getValue("paris").label).isEqualTo("Paris")
         assertThat(s.names.getValue("ile de france").label).isEqualTo("Île-de-France, France")
+    }
+
+    @Test
+    fun aCountrysOtherNameThatIsATownsToo() = runBlocking {
+        file("holland mi", 42.7875, -86.1089) // Holland, Michigan
+        file("amsterdam", 52.3676, 4.9041)
+        places.scan()
+        val s = places.snapshot.value
+        assertThat(s.keys.getValue("holland")).containsExactly("holland mi", "amsterdam")
+        assertThat(s.names.getValue("holland").label).isEqualTo("Holland")
     }
 
     @Test

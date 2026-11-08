@@ -124,8 +124,8 @@ private val FIELD_LABELS = mapOf(
 @Composable
 fun GalleryScreen(
     vm: GalleryViewModel,
+    /** Opens the viewer at the given index of the list [GalleryViewModel.openViewer] was given. */
     onOpen: (Int) -> Unit,
-    onOpenSearchHit: (Int) -> Unit,
     onSettings: () -> Unit,
     onModels: () -> Unit,
 ) {
@@ -167,6 +167,13 @@ fun GalleryScreen(
     // The thumbnail long-pressed: its list and its index in it.
     var pressed by remember { mutableStateOf<Pair<List<MediaEntity>, Int>?>(null) }
     val actions = rememberMediaActions(vm)
+    val places by vm.places.collectAsState()
+
+    // Opens the viewer at [i] of [list], with how each was found when searching.
+    val open: (List<MediaEntity>, Int) -> Unit = { list, i ->
+        vm.openViewer(list, results?.mapNotNull { h -> h.result?.let { h.item.id to it } }?.toMap().orEmpty())
+        onOpen(i)
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).nestedScroll(connection)) {
         val padding = PaddingValues(top = headerDp, bottom = bottomPad + 8.dp)
@@ -183,7 +190,7 @@ fun GalleryScreen(
             if (items.isEmpty()) {
                 EmptyTab(category, all.isEmpty(), Modifier.padding(top = headerDp))
             } else {
-                ThumbnailGrid(items, settings, padding, onOpen = { list, i -> vm.openViewer(list); onOpen(i) },
+                ThumbnailGrid(items, settings, padding, onOpen = open,
                     onLongPress = { list, i -> pressed = list to i }, onZoom = zoom,
                     state = gridState, aspectFixes = aspectFixes, onAspect = vm::recordAspect)
             }
@@ -195,10 +202,7 @@ fun GalleryScreen(
                 val semantic = remember(hits) { hits.filter { it.result?.semanticOnly == true }.map { it.item.id }.toSet() }
                 ThumbnailGrid(
                     list, settings, padding,
-                    onOpen = { shown, i ->
-                        vm.openViewer(shown, hits.mapNotNull { h -> h.result?.let { h.item.id to it } }.toMap())
-                        onOpenSearchHit(i)
-                    },
+                    onOpen = open,
                     onLongPress = { list, i -> pressed = list to i },
                     onZoom = zoom, state = searchState,
                     badge = { it.id in semantic },
@@ -236,6 +240,13 @@ fun GalleryScreen(
             if (hits != null) {
                 searchDate?.let { date -> ReadChip(date.filter.label, Icons.Outlined.DateRange, onDismiss = vm::dismissDate) }
                 reading.place?.let { place -> ReadChip(place.label, Icons.Outlined.Place, onDismiss = vm::dismissPlace) }
+                // A place named in passing ranks the pictures taken there first: said, so it can be undone
+                // (a name that is also a word: "nice beach").
+                val named = reading.named.mapNotNull { places.names[it]?.label }
+                if (named.isNotEmpty()) {
+                    ReadChip(named.joinToString("; ") + " first", Icons.Outlined.Place, onDismiss = vm::dismissPlace,
+                        dismiss = "Rank without where they were taken")
+                }
                 SearchChips(
                     words = reading.words.isNotEmpty(),
                     fields = settings.searchFields,
@@ -259,16 +270,7 @@ fun GalleryScreen(
     pressed?.let { (list, i) ->
         val item = list[i]
         val hit = results?.firstOrNull { it.item.id == item.id }?.result
-        MediaSheet(item, hit, vm, actions, onDismiss = { pressed = null }, onOpen = {
-            val hits = results
-            if (hits != null) {
-                vm.openViewer(list, hits.mapNotNull { h -> h.result?.let { h.item.id to it } }.toMap())
-                onOpenSearchHit(i)
-            } else {
-                vm.openViewer(list)
-                onOpen(i)
-            }
-        })
+        MediaSheet(item, hit, vm, actions, onDismiss = { pressed = null }, onOpen = { open(list, i) })
     }
 
     // Once: this phone has too little memory for the AI.
@@ -468,16 +470,16 @@ private fun SearchChips(
 
 /**
  * A date or a place read in the query ([label]: what it was taken to mean, beside its [icon]);
- * × searches for its words instead.
+ * × ([dismiss] to accessibility) searches for its words instead.
  */
 @Composable
-private fun ReadChip(label: String, icon: ImageVector, onDismiss: () -> Unit) {
+private fun ReadChip(label: String, icon: ImageVector, onDismiss: () -> Unit, dismiss: String = "Search for these words instead") {
     InputChip(
         selected = true,
         onClick = onDismiss,
         label = { Text(label, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         leadingIcon = { Icon(icon, contentDescription = null, Modifier.size(18.dp)) },
-        trailingIcon = { Icon(Icons.Outlined.Close, contentDescription = "Search for these words instead", Modifier.size(18.dp)) },
+        trailingIcon = { Icon(Icons.Outlined.Close, contentDescription = dismiss, Modifier.size(18.dp)) },
         modifier = Modifier.padding(horizontal = 8.dp),
     )
 }

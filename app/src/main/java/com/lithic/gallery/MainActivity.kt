@@ -168,7 +168,6 @@ private fun AppRoot(vm: GalleryViewModel) {
             GalleryScreen(
                 vm,
                 onOpen = { i -> viewerIndex = i; routeName = "viewer" },
-                onOpenSearchHit = { i -> viewerIndex = i; routeName = "viewer" },
                 onSettings = { routeName = "settings" },
                 onModels = { routeName = "models" },
             )

@@ -87,7 +87,7 @@ count, and a name that is also an ordinary word ("nice", "reading") is a place o
 "at", "near", "from", "to" or "around", or with nothing else but words like "photos", "my" or
 "trip": "nice beach" and "dinner in a nice restaurant" look for nice things. A place named
 without those words ("beach hawaii") puts the pictures taken there first among what the other
-words find. Android hides where
+words find; a chip says so ("Hawaii, United States first"), and tapping it ranks without it. Android hides where
 pictures were taken unless the app is allowed to read it, which it asks once (Settings → Search
 → *Places* asks again, and says how many pictures say where they were taken); taking the
 permission away in Android's settings makes NLSGallery forget what it read. Pictures with no
