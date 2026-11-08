@@ -87,20 +87,31 @@ class DescribeFailureTest {
     fun anEmbeddingMiniLmFailedToMakeIsMadeLater() = runBlocking {
         val key = "describe-failure-test-unembedded-${System.nanoTime()}"
         try {
-            dao.saveUnembedded(DescriptionEntity(key, "a cat sitting on a couch", "", "", 1L, null))
+            val d = DescriptionEntity(key, "a cat sitting on a couch", "", "", 1L, null)
+            dao.saveUnembedded(d)
             assertThat(dao.embedding(key, MiniLmEmbedder.MODEL_ID)).isNull()
-            assertThat(app.ai.embedMissing(key, captionsOnly)).isEqualTo(AiEngine.Outcome.Described)
+            assertThat(app.ai.embedMissing(d, captionsOnly)).isEqualTo(AiEngine.Outcome.Described)
             assertThat(dao.embedding(key, MiniLmEmbedder.MODEL_ID)).isNotNull()
             // Made, it is not made again.
-            assertThat(app.ai.embedMissing(key, captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
+            assertThat(app.ai.embedMissing(d, captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
         } finally {
             dao.forget(key)
         }
     }
 
     @Test
-    fun theProbeFindsTheModelsWorking() = runBlocking {
-        assertThat(app.ai.modelsWork(captionsOnly, captions = true, ocr = false)).isTrue()
+    fun anEmbeddingIsNotSavedOverADescriptionResetMeanwhile() = runBlocking {
+        val key = "describe-failure-test-reset-${System.nanoTime()}"
+        try {
+            val d = DescriptionEntity(key, "a dog on a beach", "", "", 1L, null)
+            dao.saveUnembedded(d)
+            dao.forget(key) // "Describe again", between the listing and the embedding
+            assertThat(app.ai.embedMissing(d, captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
+            assertThat(dao.description(key)).isNull()
+            assertThat(dao.embedding(key, MiniLmEmbedder.MODEL_ID)).isNull()
+        } finally {
+            dao.forget(key)
+        }
     }
 
     @Test

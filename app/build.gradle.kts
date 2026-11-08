@@ -116,6 +116,10 @@ ksp {
     arg("room.generateKotlin", "true")
 }
 
+// MigrationTest's assets are the schemas KSP writes: merge them only once it has written them
+// (else the first test APK after a schema change lacks the new one).
+tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach { dependsOn("kspDebugKotlin") }
+
 dependencies {
     implementation(project(":core"))
     implementation(libs.onnxruntime.android)

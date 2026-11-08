@@ -56,12 +56,56 @@ class AiDaoTest {
         dao.saveDescribed(DescriptionEntity("a", "a cat", null, "", 1, null), embedding("a"))
         dao.saveUnembedded(DescriptionEntity("a", "a cat", "SALE", "", 2, null))
         dao.saveDescribed(DescriptionEntity("b", "a dog", null, "", 3, null), embedding("b"))
-        dao.saveUnembedded(DescriptionEntity("c", "  ", "", "", 4, null)) // nothing to embed
+        dao.saveUnembedded(DescriptionEntity("c", "  ", "", "", 4, null)) // no text: the caller tells
         dao.upsertDescription(DescriptionEntity("d", "a cow", null, "", 5, "unreadable")) // set aside
+        dao.saveUnembedded(DescriptionEntity("gone", "a hen", null, "", 6, null)) // no file has it now
 
         assertThat(dao.embedding("a", "m")).isNull()
         // Once for description "a", though two files share it.
-        assertThat(dao.withoutEmbedding("m").map { it.aiKey }).containsExactly("a")
+        assertThat(dao.withoutEmbedding("m").map { it.hash }).containsExactly("a", "c")
+    }
+
+    @Test
+    fun filesTheModelsFailedOnComeLast(): Unit = runBlocking {
+        db.media().upsert(listOf(media(1, "old"), media(2, "new"), media(3, "newest")))
+        dao.noteModelFailure("newest", 10)
+        val order = dao.undescribed(videos = true, captions = true, ocr = false).map { it.aiKey }
+        assertThat(order).containsExactly("new", "old", "newest").inOrder()
+        assertThat(dao.withoutText(videos = true).map { it.aiKey }.last()).isEqualTo("newest")
+    }
+
+    @Test
+    fun theThirdCountedFailureSetsAFileAside(): Unit = runBlocking {
+        dao.countModelFailure("k", "boom", 1, max = 3)
+        dao.countModelFailure("k", "boom", 2, max = 3)
+        assertThat(dao.description("k")!!.error).isNull()
+        assertThat(dao.description("k")!!.modelFailures).isEqualTo(2)
+        dao.countModelFailure("k", "boom", 3, max = 3)
+        assertThat(dao.description("k")!!.error).isEqualTo("the AI failed on it 3 times: boom")
+        // A part made in between starts the count again.
+        dao.countModelFailure("j", "x", 1, max = 3)
+        dao.saveDescribed(DescriptionEntity("j", "a cat", null, "", 2, null), embedding("j"))
+        assertThat(dao.description("j")!!.modelFailures).isEqualTo(0)
+        assertThat(dao.description("j")!!.lastModelFailure).isNull()
+    }
+
+    @Test
+    fun anEmbeddingIsSavedOnlyOverTheTextItWasMadeFrom(): Unit = runBlocking {
+        val first = DescriptionEntity("k", "a cat", null, "", 1, null)
+        dao.saveUnembedded(first)
+        // Its text read meanwhile: the embedding of the caption alone is not saved.
+        dao.saveUnembedded(first.copy(ocr = "SALE", describedAt = 2))
+        assertThat(dao.saveEmbeddingIfCurrent(embedding("k"), first, 3)).isFalse()
+        assertThat(dao.embedding("k", "m")).isNull()
+        // Reset meanwhile: nothing comes back.
+        dao.forget("k")
+        assertThat(dao.saveEmbeddingIfCurrent(embedding("k"), first, 4)).isFalse()
+        assertThat(dao.description("k")).isNull()
+        // Unchanged: saved, with a new describedAt for the search index.
+        dao.saveUnembedded(first)
+        assertThat(dao.saveEmbeddingIfCurrent(embedding("k"), first, 5)).isTrue()
+        assertThat(dao.embedding("k", "m")).isNotNull()
+        assertThat(dao.description("k")!!.describedAt).isEqualTo(5)
     }
 
     @Test

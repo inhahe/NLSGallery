@@ -5,38 +5,41 @@ import org.junit.Test
 
 class ModelFailureTrackerTest {
     @Test
-    fun aFailureAmongSuccessesIsTheFiles() {
+    fun aFailureBeforeASuccessIsTheFiles() {
         val t = ModelFailureTracker<String>()
-        assertThat(t.modelsWorked()).isEmpty()
+        // Files the models fail on at the head of the pass: suspects, until one is described.
         t.modelsFailed("a", "boom")
-        assertThat(t.modelsWorked()).containsExactly("a" to "boom")
+        t.modelsFailed("b", "boom")
+        assertThat(t.shouldGiveUp).isFalse()
+        assertThat(t.modelsWorked()).containsExactly("a" to "boom", "b" to "boom")
         assertThat(t.finished()).isEmpty()
     }
 
     @Test
-    fun failuresInARowCallForAProbe() {
-        val t = ModelFailureTracker<String>(stopAfter = 3)
+    fun failuresWithNoSuccessBetweenGiveUpBlamingNoOne() {
+        val t = ModelFailureTracker<String>(giveUpAfter = 3)
+        t.modelsWorked()
         t.modelsFailed("a", "x")
         t.modelsFailed("b", "x")
-        assertThat(t.shouldProbe).isFalse()
+        assertThat(t.shouldGiveUp).isFalse()
         t.modelsFailed("c", "x")
-        assertThat(t.shouldProbe).isTrue()
-        // The probe went through: the three are at fault, and the run goes on.
-        assertThat(t.modelsWorked()).containsExactly("a" to "x", "b" to "x", "c" to "x")
-        assertThat(t.shouldProbe).isFalse()
+        assertThat(t.shouldGiveUp).isTrue()
+        t.gaveUp()
+        // The models worked earlier in the pass, but these three are not blamed.
+        assertThat(t.finished()).isEmpty()
     }
 
     @Test
-    fun aSuccessResetsTheCountInARow() {
-        val t = ModelFailureTracker<String>(stopAfter = 2)
+    fun aSuccessStartsTheCountAgain() {
+        val t = ModelFailureTracker<String>(giveUpAfter = 2)
         t.modelsFailed("a", "x")
         assertThat(t.modelsWorked()).containsExactly("a" to "x")
         t.modelsFailed("b", "x")
-        assertThat(t.shouldProbe).isFalse()
+        assertThat(t.shouldGiveUp).isFalse()
     }
 
     @Test
-    fun failuresAtTheEndCountOnlyIfTheModelsWorkedInTheRun() {
+    fun failuresAtTheEndCountOnlyIfTheModelsWorkedInThePass() {
         val worked = ModelFailureTracker<String>()
         worked.modelsWorked()
         worked.modelsFailed("a", "x")

@@ -80,10 +80,15 @@ data class DescriptionEntity(
      */
     val error: String?,
     /**
-     * Runs in which the models failed on it while they worked for other files, since its
-     * description was last complete.
+     * Runs in which the models failed on it while they worked for other files of the same pass,
+     * since a part of it was last made.
      */
     @ColumnInfo(defaultValue = "0") val modelFailures: Int = 0,
+    /**
+     * When the models last failed on it, counted or not; null since a part was last made. Runs
+     * take such files last, so files the models fail on cannot hold up the rest.
+     */
+    val lastModelFailure: Long? = null,
 ) {
     companion object {
         /** Model failures after which a file is set aside as failed, so it stops costing every run. */
@@ -207,17 +212,54 @@ interface AiDao {
     }
 
     /**
-     * Files whose description has text but no [model] embedding (MiniLM failed when it was
-     * saved), one per description.
+     * Descriptions of files in the library with no [model] embedding: MiniLM failed when they were
+     * saved, or they have no text (the caller tells which, as embedding does).
      */
     @Query(
-        """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
+        """SELECT d.* FROM ai_descriptions d
            LEFT JOIN ai_embeddings e ON e.hash = d.hash AND e.model = :model
            WHERE d.error IS NULL AND e.hash IS NULL
-             AND (TRIM(COALESCE(d.caption, '')) != '' OR TRIM(COALESCE(d.ocr, '')) != '')
-           GROUP BY d.hash"""
+             AND EXISTS (SELECT 1 FROM media m WHERE m.aiKey = d.hash)
+             AND (d.caption IS NOT NULL OR d.ocr IS NOT NULL)"""
     )
-    suspend fun withoutEmbedding(model: String): List<MediaEntity>
+    suspend fun withoutEmbedding(model: String): List<DescriptionEntity>
+
+    /**
+     * Embedding [e] saved only if its description is still the text [of] it was made from (not
+     * reset, failed or described again meanwhile), with a new describedAt [at] so the search index
+     * sees it. Whether it was saved.
+     */
+    @Transaction
+    suspend fun saveEmbeddingIfCurrent(e: EmbeddingEntity, of: DescriptionEntity, at: Long): Boolean {
+        val now = description(e.hash) ?: return false
+        if (now.error != null || now.caption != of.caption || now.ocr != of.ocr) return false
+        upsertEmbedding(e)
+        upsertDescription(now.copy(describedAt = at))
+        return true
+    }
+
+    /** The models failed on file [hash] at [at], whoever's fault it was. */
+    @Transaction
+    suspend fun noteModelFailure(hash: String, at: Long) {
+        val d = description(hash)
+        if (d?.error != null) return
+        upsertDescription(d?.copy(lastModelFailure = at) ?: DescriptionEntity(hash, null, null, "", at, null, 0, at))
+    }
+
+    /**
+     * Counts a run in which the models failed on file [hash] while they worked for others of the
+     * same pass; the [max]th sets it aside as failed with [message].
+     */
+    @Transaction
+    suspend fun countModelFailure(hash: String, message: String, at: Long, max: Int) {
+        val d = description(hash)
+        if (d?.error != null) return
+        val n = (d?.modelFailures ?: 0) + 1
+        val error = if (n >= max) "the AI failed on it $n times: $message" else null
+        upsertDescription(
+            (d ?: DescriptionEntity(hash, null, null, "", at, null)).copy(describedAt = at, error = error, modelFailures = n, lastModelFailure = at)
+        )
+    }
 
     /**
      * Files still to describe, newest first: no description, or a part that is wanted and missing.
@@ -228,7 +270,7 @@ interface AiDao {
            WHERE (m.isVideo = 0 OR :videos)
              AND (d.hash IS NULL OR (d.error IS NULL AND
                   ((:captions AND d.caption IS NULL) OR (:ocr AND d.ocr IS NULL))))
-           ORDER BY m.sortDate DESC, m.id DESC"""
+           ORDER BY d.lastModelFailure IS NOT NULL, m.sortDate DESC, m.id DESC"""
     )
     suspend fun undescribed(videos: Boolean, captions: Boolean, ocr: Boolean): List<MediaEntity>
 
@@ -239,7 +281,8 @@ interface AiDao {
     @Query(
         """SELECT m.* FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
            WHERE (m.isVideo = 0 OR :videos) AND (d.hash IS NULL OR (d.error IS NULL AND d.ocr IS NULL))
-           ORDER BY CASE m.folder WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 4 THEN 3 ELSE 4 END,
+           ORDER BY d.lastModelFailure IS NOT NULL,
+                    CASE m.folder WHEN 1 THEN 0 WHEN 3 THEN 1 WHEN 2 THEN 2 WHEN 4 THEN 3 ELSE 4 END,
                     m.sortDate DESC, m.id DESC"""
     )
     suspend fun withoutText(videos: Boolean): List<MediaEntity>
@@ -311,7 +354,7 @@ interface AiDao {
 
 @Database(
     entities = [MediaEntity::class, DescriptionEntity::class, EmbeddingEntity::class, DisplayAspectEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -321,7 +364,7 @@ abstract class GalleryDatabase : RoomDatabase() {
     companion object {
         fun open(context: Context): GalleryDatabase =
             Room.databaseBuilder(context, GalleryDatabase::class.java, "gallery.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
 
         /** 2 learns displayed aspect ratios from thumbnails ([DisplayAspectEntity]). */
@@ -338,6 +381,13 @@ abstract class GalleryDatabase : RoomDatabase() {
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `ai_descriptions` ADD COLUMN `modelFailures` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** 4 notes when the models last failed on a file ([DescriptionEntity.lastModelFailure]). */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `ai_descriptions` ADD COLUMN `lastModelFailure` INTEGER")
             }
         }
     }

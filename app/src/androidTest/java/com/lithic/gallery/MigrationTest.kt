@@ -28,24 +28,32 @@ class MigrationTest {
     }
 
     private fun assertKept(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-        db.query("SELECT caption, ocr, modelFailures FROM ai_descriptions WHERE hash = 'k'").use { c ->
+        db.query("SELECT caption, ocr, modelFailures, lastModelFailure FROM ai_descriptions WHERE hash = 'k'").use { c ->
             assertThat(c.moveToFirst()).isTrue()
             assertThat(c.getString(0)).isEqualTo("a cat on a table")
             assertThat(c.getString(1)).isEqualTo("SALE")
             assertThat(c.getInt(2)).isEqualTo(0)
+            assertThat(c.isNull(3)).isTrue()
         }
     }
+
+    private val all = arrayOf(GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4)
 
     @Test
     fun fromVersion1() {
         helper.createDatabase(name, 1).use(::insertDescription)
-        helper.runMigrationsAndValidate(name, 3, true, GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3)
-            .use(::assertKept)
+        helper.runMigrationsAndValidate(name, 4, true, *all).use(::assertKept)
     }
 
     @Test
     fun fromVersion2() {
         helper.createDatabase(name, 2).use(::insertDescription)
-        helper.runMigrationsAndValidate(name, 3, true, GalleryDatabase.MIGRATION_2_3).use(::assertKept)
+        helper.runMigrationsAndValidate(name, 4, true, *all).use(::assertKept)
+    }
+
+    @Test
+    fun fromVersion3() {
+        helper.createDatabase(name, 3).use(::insertDescription)
+        helper.runMigrationsAndValidate(name, 4, true, *all).use(::assertKept)
     }
 }

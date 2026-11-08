@@ -112,15 +112,17 @@ ships in assets.
   name: screenshots, messaging apps, downloads, camera, other) and an `aiKey` =
   sha1(name, size, mtime), so moved files keep their descriptions (thumbsup2 keys its cache the
   same way).
-- Room (`Database.kt`, version 3; migrations kept and tested from every version shipped,
-  `MigrationTest` on the device, schemas in `app/schemas`): `media` (the library copy),
-  `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`; caption/ocr
-  nullable per part; `error` marks a file that opened but could not be decoded, ran out of
-  memory, or that the models failed on in three runs (`modelFailures`), not tried again until
-  it changes or "Retry failed"; `describedAt` is later at every write, which the search index
-  relies on), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded). A
-  description and its embedding are written in one transaction (`saveDescribed`), and reset in
-  one (`forget`, and "Retry failed", `clearFailures`).
+- Room (`Database.kt`, version 4; migrations kept and tested from every version
+  (`MigrationTest` on the device, the schemas in `app/schemas` its assets)): `media` (the
+  library copy), `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`;
+  caption/ocr nullable per part; `error` marks a file that opened but could not be decoded, ran
+  out of memory being read, or that the models failed on in three runs (`modelFailures`), not
+  tried again until it changes or "Retry failed"; `lastModelFailure`, when the models last
+  failed on it, puts it last in every pass; `describedAt` is later at every write, which the
+  search index relies on), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded).
+  A description and its embedding are written in one transaction (`saveDescribed`), reset in
+  one (`forget`, and "Retry failed", `clearFailures`), and an embedding made later is saved
+  only over the text it was made from (`saveEmbeddingIfCurrent`).
 - `MediaRepository.sync()` diffs MediaStore against the table (upsert changed, delete gone);
   run at start, on MediaStore change notifications (debounced) while open, and by the workers.
 - `SettingsStore`: DataStore preferences, one `Settings` value.
@@ -183,18 +185,22 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   its text), `release()` closes the models. `describe` reports what it did (`Outcome`). Reading
   the file failing (or running out of memory reading it) is the file's fault: the error is
   saved, unless the file cannot be opened at all just now (deleted, card removed), which leaves
-  it for the next run. Opening or running the models failing (running out of memory included)
-  saves nothing: whose fault it is shows over the run (`ModelFailureTracker` in
-  `DescribeWorker`). If the models work for another file in the run, the failure is the file's
-  and counted (`recordModelFailure`; the third, until the description is complete, sets it
-  aside as failed). After three in a row a probe (`modelsWork`: a small picture of the app's
-  own through the same models) decides: working, the three are counted and the run goes on;
-  failing too, the run stops, blaming none, and WorkManager retries it later. The models are
-  closed after each failure, giving back their memory. MiniLM failing is never the file's (its
-  input is text): the description is saved without an embedding (any older one, of other text,
-  removed with it), and the next run's embedding pass (`AiDao.withoutEmbedding`,
-  `embedMissing`) makes it. A file on record as failed is skipped, so the text pass does not
-  retry what the caption pass just failed on (`DescribeFailureTest`).
+  it for the next run. Opening or running the models failing (running out of memory included,
+  the image being bounded by then; one `modelWork` wrapper) makes nothing and notes the time
+  (`noteModelFailure`). Whose fault it is shows over each pass of the run
+  (`ModelFailureTracker` in `DescribeWorker`): if the same pass then describes another file,
+  the models work for its kind of input, and the failure is the file's and counted
+  (`recordModelFailure`, once a run; the third sets it aside). Six failures with none described
+  between say the models fail on everything just now (memory, say): the pass gives up, blaming
+  none, and the run is retried later. Files the models failed on come last in every pass, so
+  files that always fail cannot hold one up: the next run tries the others first, and their
+  success is the evidence. Any part made resets the count. The models are closed after each
+  failure, giving back their memory. MiniLM failing is never the file's (its input is text):
+  the description is saved without an embedding (any older one, of other text, removed with
+  it), and an embedding pass before and after the describing passes (`AiDao.withoutEmbedding`,
+  `embedMissing`) makes it; it gives up on MiniLM failing like any pass, blaming no file. A
+  file on record as failed is skipped, so the text pass does not retry what the caption pass
+  just failed on (`DescribeFailureTest`).
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.
@@ -225,9 +231,10 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 
 Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s
 each, so the whole library is soon searchable; then the text in pictures, 10-60 s each, ordered
-screenshots, downloads, messages, other, camera (`AiDao.withoutText`). Before them, the
-embeddings MiniLM failed to make are made (milliseconds each). It saves per file, so stopping
-loses at most one. With more than
+screenshots, downloads, messages, other, camera (`AiDao.withoutText`); files the models failed
+on last in each. Before and after them, the embeddings MiniLM failed to make are made
+(milliseconds each). It saves per file, so stopping loses at most one; progress is reported at
+most once a second. With more than
 three files (or user-started) it asks to run in the foreground with a progress notification and
 a Stop action (`mediaProcessing` on Android 15+, `dataSync` before); Android may refuse that from
 the background, and then it runs as a normal job (10-minute limit, resumed by the next trigger).
