@@ -478,7 +478,7 @@ private fun AiDialog(
                 }
                 if (ai.failures > 0) {
                     Spacer(Modifier.height(8.dp))
-                    Text("${ai.failures} could not be read.", style = MaterialTheme.typography.bodySmall)
+                    Text("${ai.failures} could not be described.", style = MaterialTheme.typography.bodySmall)
                 }
             }
         },

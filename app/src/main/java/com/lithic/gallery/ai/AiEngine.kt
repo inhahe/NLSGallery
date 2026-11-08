@@ -48,7 +48,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /** What [describe] (or [embedMissing]) did with a file. */
     sealed interface Outcome {
-        /** Its description (and embedding) saved. */
+        /** Its description saved, with its embedding unless MiniLM failed (then made later). */
         data object Described : Outcome
         /** Nothing to do, on record as failed, or not to be opened just now: left as it was. */
         data object Skipped : Outcome
@@ -59,6 +59,8 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
          * Whose fault it was shows over the run (see [recordModelFailure]).
          */
         data class ModelsFailed(val message: String) : Outcome
+        /** The models could not be opened (removed during the run, say): nothing about the file. */
+        data object ModelsUnavailable : Outcome
     }
 
     /** The models' work run by [modelWork]: its result, or how the models failed. */
@@ -134,10 +136,13 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             else MediaDecoding.manualCaption(context.contentResolver, item.contentUri)
             val tDecode = ms(t0)
 
+            // Opening them failing says nothing about this file: no note on it.
+            if (modelWork("opening the models") { open(captions, ocr, s) } is Attempt.Failed) {
+                return@withContext Outcome.ModelsUnavailable
+            }
             var tCaption = 0L
             var tOcr = 0L
             val made = modelWork("file ${item.id}") {
-                open(captions, ocr, s)
                 var caption = existing?.caption
                 var text = existing?.ocr
                 if (wantCaption) {
@@ -171,12 +176,16 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     /**
      * Saves [description] with the embedding of its text. MiniLM failing does not hold up the
      * description (MiniLM reads only its text): it is saved without one (any older embedding, now
-     * of other text, removed with it) for [embedMissing] to make.
+     * of other text, removed with it) for [embedMissing] to make, and the models are closed, so
+     * a shortage of memory that made it fail does not carry over to the next file.
      */
     private suspend fun save(description: DescriptionEntity, mediaId: Long) {
         when (val e = modelWork("the embedding of file $mediaId") { embed(description.hash, description.caption ?: "", description.ocr ?: "") }) {
             is Attempt.Done -> dao.saveDescribed(description, e.value)
-            is Attempt.Failed -> dao.saveUnembedded(description)
+            is Attempt.Failed -> {
+                dao.saveUnembedded(description)
+                closeModels()
+            }
         }
     }
 
@@ -186,7 +195,10 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      */
     suspend fun embedMissing(d: DescriptionEntity, s: Settings): Outcome = mutex.withLock {
         withContext(Dispatchers.Default) {
-            when (val e = modelWork("a missing embedding") { open(captions = false, ocr = false, s); embed(d.hash, d.caption ?: "", d.ocr ?: "") }) {
+            if (modelWork("opening MiniLM") { open(captions = false, ocr = false, s) } is Attempt.Failed) {
+                return@withContext Outcome.ModelsUnavailable
+            }
+            when (val e = modelWork("a missing embedding") { embed(d.hash, d.caption ?: "", d.ocr ?: "") }) {
                 is Attempt.Failed -> Outcome.ModelsFailed(e.message)
                 is Attempt.Done -> {
                     val embedding = e.value ?: return@withContext Outcome.Skipped
@@ -212,7 +224,8 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     /**
      * Whether the models for [part] still work on input they handled before, like [like] (a file
      * they just failed on). Captions: a file whose caption they made (BLIP sees every picture at
-     * 384x384, so any will do). Text: one whose text they read at the same detail as [like].
+     * 384x384, so any will do). Text: one whose text they read at [like]'s detail or more (the
+     * nearest first: more detail needs more memory, so it proves at least as much).
      * Embeddings: text as long as MiniLM reads. Up to [REFERENCE_TRIES] files are tried, newest
      * first, passing over any that cannot be read now. True or false is the models' answer; null
      * means there was nothing to try them on. Nothing is saved.
@@ -225,9 +238,11 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             val candidates = when (part) {
                 Part.CAPTIONS -> dao.captionedReferences(REFERENCE_TRIES)
                 else -> {
-                    val canvas = like?.let { s.textDetail.canvasFor(it.folderCategory, it.isVideo) }
+                    val canvas = like?.let { s.textDetail.canvasFor(it.folderCategory, it.isVideo) } ?: 0
+                    fun canvasOf(m: MediaEntity) = s.textDetail.canvasFor(m.folderCategory, m.isVideo)
                     dao.readReferences(200)
-                        .filter { canvas == null || s.textDetail.canvasFor(it.folderCategory, it.isVideo) == canvas }
+                        .filter { canvasOf(it) >= canvas }
+                        .sortedBy { canvasOf(it) } // stable: newest first within each detail
                         .take(REFERENCE_TRIES)
                 }
             }
@@ -253,11 +268,15 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /**
      * The frames the models see of [item]: a photo whole; a video's frames at [VIDEO_FRAMES] for
-     * [captions], else its middle one alone (text is read from that). Empty when a video yields none.
+     * [captions], else its middle one alone (text is read from that), or, if that one cannot be
+     * extracted, whichever of the others can. Empty when a video yields none.
      */
-    private fun frames(item: MediaEntity, captions: Boolean): List<RgbImage> =
-        if (item.isVideo) MediaDecoding.decodeVideoFrames(context, item.contentUri, if (captions) VIDEO_FRAMES else listOf(VIDEO_FRAMES[1]))
-        else listOf(MediaDecoding.decodeImage(context.contentResolver, item.contentUri))
+    private fun frames(item: MediaEntity, captions: Boolean): List<RgbImage> = when {
+        !item.isVideo -> listOf(MediaDecoding.decodeImage(context.contentResolver, item.contentUri))
+        captions -> MediaDecoding.decodeVideoFrames(context, item.contentUri, VIDEO_FRAMES)
+        else -> MediaDecoding.decodeVideoFrames(context, item.contentUri, listOf(VIDEO_FRAMES[1]))
+            .ifEmpty { MediaDecoding.decodeVideoFrames(context, item.contentUri, VIDEO_FRAMES) }
+    }
 
     /** The caption of [frames]: a video's, each sampled frame's caption, repeats dropped. */
     private fun captionOf(frames: List<RgbImage>): String =

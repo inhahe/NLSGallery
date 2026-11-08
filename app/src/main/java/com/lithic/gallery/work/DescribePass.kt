@@ -7,12 +7,14 @@ import com.lithic.gallery.ai.AiEngine
  * pictures, embeddings), telling the files the models fail on from models that fail on anything
  * (out of memory, say).
  *
- * A file the models failed on is a suspect. Suspects are blamed (counted against the file) once
- * the models are seen to work: the pass describes another file, or, when [giveUpAfter] failures
- * come with none described between or the pass ends with suspects, a [probe] re-runs the models
- * on input they handled before. If the probe fails too, the models are failing just now: the pass
- * ends ([End.ModelsFailing]) blaming none. If there is nothing to probe on, nothing can be told:
- * the pass ends ([End.Undecided]) blaming none, its suspects left for a later run.
+ * A file the models failed on is a suspect. Once the models are seen to work (the pass describes
+ * another file, or, when [giveUpAfter] failures come with none described between or the pass
+ * ends with suspects, a [probe] re-runs them on input they handled before), each suspect is tried
+ * once more: described now, the failure was the moment's (a passing shortage of memory); failing
+ * again, it is blamed (counted against the file). If the probe fails too, the models are failing
+ * just now: the pass ends ([End.ModelsFailing]) blaming none. If there is nothing to probe on,
+ * nothing can be told: the pass ends ([End.Undecided]) blaming none, its suspects left for a later
+ * run. Models that cannot even be opened end it at once ([End.ModelsFailing]).
  *
  * @param T the pass's items.
  * @param attempt describes one item.
@@ -33,7 +35,7 @@ class DescribePass<T>(
     enum class End {
         /** Every item tried (or [run]'s stop asked for). */
         Done,
-        /** The models fail even on input they handled before: try again later. */
+        /** The models fail even on input they handled before, or cannot be opened: try again later. */
         ModelsFailing,
         /** The models failed with nothing to try them on to tell why: stopped, blaming none. */
         Undecided,
@@ -42,21 +44,39 @@ class DescribePass<T>(
     /** Runs the pass over [items]; [stopped] is asked before each. */
     suspend fun run(items: List<T>, stopped: () -> Boolean = { false }): End {
         val suspects = ArrayList<Pair<T, String>>()
-        suspend fun cleared() = blame(suspects.toList()).also { suspects.clear() }
-        /** After failures with no success since: whether to go on. */
+
+        /** The models work: the suspects are tried again, and those that fail again blamed. */
+        suspend fun retrySuspects(): End? {
+            if (suspects.isEmpty()) return null
+            val again = suspects.toList().also { suspects.clear() }
+            val guilty = ArrayList<Pair<T, String>>()
+            for ((item, _) in again) {
+                when (val outcome = attempt(item)) {
+                    is AiEngine.Outcome.ModelsFailed -> { guilty.add(item to outcome.message); afterFailure() }
+                    AiEngine.Outcome.ModelsUnavailable -> return End.ModelsFailing
+                    else -> {}
+                }
+            }
+            if (guilty.isNotEmpty()) blame(guilty)
+            return null
+        }
+
+        /** After failures with no success since: whether to go on (null) or how the pass ends. */
         suspend fun decide(): End? = when (probe(suspects.last().first)) {
-            true -> { cleared(); null }
+            true -> retrySuspects()
             false -> End.ModelsFailing
             null -> End.Undecided
         }
+
         for (item in items) {
             if (stopped()) return End.Done
             when (val outcome = attempt(item)) {
-                AiEngine.Outcome.Described -> cleared()
+                AiEngine.Outcome.Described -> retrySuspects()?.let { return it }
                 is AiEngine.Outcome.ModelsFailed -> {
                     suspects.add(item to outcome.message)
                     afterFailure()
                 }
+                AiEngine.Outcome.ModelsUnavailable -> return End.ModelsFailing
                 else -> {}
             }
             progress()

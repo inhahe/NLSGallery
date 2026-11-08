@@ -7,18 +7,22 @@ import org.junit.Test
 
 /**
  * Who a pass blames for model failures. Items are names: "ok…" are described, "bad…" are files
- * the models always fail on; [modelsWork] says whether the models work at all (the probe's answer).
+ * the models always fail on; [Run.modelsWork] says whether the models work at all (the probe's
+ * answer), and the first [Run.failFirst] attempts fail whatever the file (a passing shortage).
  */
 class DescribePassTest {
-    private class Run(var modelsWork: Boolean? = true, val failFirst: Int = 0) {
+    private class Run(var modelsWork: Boolean? = true, val failFirst: Int = 0, val unavailableAt: Int = -1) {
         val attempted = ArrayList<String>()
         val blamed = ArrayList<String>()
         var probes = 0
         val pass = DescribePass<String>(
             attempt = { item ->
                 attempted.add(item)
-                if (attempted.size <= failFirst || item.startsWith("bad") || modelsWork == false) Outcome.ModelsFailed("boom")
-                else Outcome.Described
+                when {
+                    attempted.size - 1 == unavailableAt -> Outcome.ModelsUnavailable
+                    attempted.size <= failFirst || item.startsWith("bad") || modelsWork == false -> Outcome.ModelsFailed("boom")
+                    else -> Outcome.Described
+                }
             },
             probe = { probes++; modelsWork },
             blame = { files -> blamed.addAll(files.map { it.first }) },
@@ -26,11 +30,23 @@ class DescribePassTest {
     }
 
     @Test
-    fun aFailureFollowedByASuccessIsTheFiles(): Unit = runBlocking {
+    fun aFileThatFailsAgainOnceTheModelsWorkIsBlamed(): Unit = runBlocking {
         val r = Run()
         assertThat(r.pass.run(listOf("bad1", "ok1", "ok2"))).isEqualTo(DescribePass.End.Done)
         assertThat(r.blamed).containsExactly("bad1")
+        // Tried once more, after ok1 showed the models working.
+        assertThat(r.attempted).containsExactly("bad1", "ok1", "bad1", "ok2").inOrder()
         assertThat(r.probes).isEqualTo(0)
+    }
+
+    @Test
+    fun aPassingShortageIsNotBlamed(): Unit = runBlocking {
+        // The models fail on the first three files (memory, say), then work again: tried once
+        // more, those three are described.
+        val r = Run(failFirst = 3)
+        assertThat(r.pass.run(listOf("ok1", "ok2", "ok3", "ok4"))).isEqualTo(DescribePass.End.Done)
+        assertThat(r.blamed).isEmpty()
+        assertThat(r.attempted).containsExactly("ok1", "ok2", "ok3", "ok4", "ok1", "ok2", "ok3").inOrder()
     }
 
     @Test
@@ -40,7 +56,7 @@ class DescribePassTest {
         val bad = (1..8).map { "bad$it" }
         assertThat(r.pass.run(listOf("ok1", "ok2") + bad)).isEqualTo(DescribePass.End.Done)
         assertThat(r.blamed).containsExactlyElementsIn(bad).inOrder()
-        assertThat(r.attempted).containsExactlyElementsIn(listOf("ok1", "ok2") + bad)
+        assertThat(r.probes).isEqualTo(2) // at six in a row, and at the end for the last two
     }
 
     @Test
@@ -74,12 +90,10 @@ class DescribePassTest {
     }
 
     @Test
-    fun aPassingShortageIsCountedLikeBadFiles(): Unit = runBlocking {
-        // The models fail on the first three files (memory, say), then work again.
-        val r = Run(failFirst = 3)
-        assertThat(r.pass.run(listOf("ok1", "ok2", "ok3", "ok4"))).isEqualTo(DescribePass.End.Done)
-        // Blamed: the evidence (ok4 described) came after them. A pass cannot tell a passing
-        // memory shortage from three bad files; the count only sets a file aside after three runs.
-        assertThat(r.blamed).containsExactly("ok1", "ok2", "ok3")
+    fun modelsThatCannotBeOpenedEndThePassAtOnce(): Unit = runBlocking {
+        val r = Run(unavailableAt = 1)
+        assertThat(r.pass.run(listOf("ok1", "ok2", "ok3"))).isEqualTo(DescribePass.End.ModelsFailing)
+        assertThat(r.attempted).containsExactly("ok1", "ok2").inOrder()
+        assertThat(r.blamed).isEmpty()
     }
 }

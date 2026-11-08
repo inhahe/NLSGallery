@@ -157,23 +157,25 @@ object Work {
 }
 
 /**
- * Describes every file that lacks a description (or a part of one now switched on), in two
- * passes: captions first, newest first (about 2 s each, so the whole library becomes searchable
- * soon), then the text in pictures (10-60 s each), likeliest to hold text first. Before and after
- * them it makes the embeddings MiniLM failed to make (milliseconds each). Each file is saved as it
- * finishes, so stopping loses at most the one in progress.
+ * Describes every file that lacks a description (or a part of one now switched on): captions
+ * first, newest first (about 2 s each, so the whole library becomes searchable soon), then the
+ * text in pictures (10-60 s each), likeliest to hold text first. Before and after those two
+ * passes it makes the embeddings MiniLM failed to make (milliseconds each). Each file is saved as
+ * it finishes, so stopping loses at most the one in progress.
  *
  * Each pass tells files the models fail on from models failing ([DescribePass], probing with
  * [AiEngine.modelsStillWork]); a file is counted at most once a run ([AiEngine.recordModelFailure]).
  * Files the models failed on come last in every pass. When the caption or text models are found
- * failing, the run stops and is retried later; when MiniLM is, the other passes go on (they save
- * descriptions without embeddings) and the run is retried later for the embeddings. MiniLM's
- * failures are never counted against a file.
+ * failing, the run stops and is retried later; when MiniLM is, or a pass could not tell why its
+ * models failed, the other passes go on (descriptions are saved without embeddings) and the run
+ * is retried later, the files that failed then coming after the others. MiniLM's failures are
+ * never counted against a file.
  */
 class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as GalleryApp
         val s = app.settings.current()
+        val started = System.currentTimeMillis()
         app.models.verifyCopied()
         if (!app.ai.ready(s)) return Result.success()
         app.repository.sync()
@@ -236,29 +238,36 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             progress = { progress(AiEngine.Part.EMBEDDINGS.phase) },
         )
 
-        var embeddingsFailing = false
+        // A pass that ended without its work done (MiniLM failing, or failures it could not tell
+        // apart): the run goes on, and is tried again later.
+        var unfinished = false
         try {
             val stop = { isStopped }
-            embeddingsFailing = embedding.run(embedFirst, stop) == DescribePass.End.ModelsFailing
+            unfinished = embedding.run(embedFirst, stop) != DescribePass.End.Done
             for ((part, items) in listOf(AiEngine.Part.CAPTIONS to captionPass, AiEngine.Part.TEXT to textPass)) {
-                if (describing(part).run(items, stop) == DescribePass.End.ModelsFailing) {
-                    Log.w(TAG, "the ${part.phase} models fail even on what they handled before; describing again later")
-                    return Result.retry()
+                when (describing(part).run(items, stop)) {
+                    DescribePass.End.ModelsFailing -> {
+                        Log.w(TAG, "the ${part.phase} models fail even on what they handled before; describing again later")
+                        return Result.retry()
+                    }
+                    DescribePass.End.Undecided -> unfinished = true
+                    DescribePass.End.Done -> {}
                 }
             }
             if (!isStopped) {
-                // Those whose embedding MiniLM failed to make in this run (not those just tried).
+                // Those whose embedding MiniLM failed to make in this run: not tried in the first
+                // pass, or saved again since it began.
                 val tried = embedFirst.mapTo(HashSet()) { it.hash }
-                val embedAfter = unembedded().filter { it.hash !in tried }
+                val embedAfter = unembedded().filter { it.hash !in tried || it.describedAt >= started }
                 total += embedAfter.size
-                embeddingsFailing = embedding.run(embedAfter, stop) == DescribePass.End.ModelsFailing || embeddingsFailing
+                if (embedding.run(embedAfter, stop) != DescribePass.End.Done) unfinished = true
             }
         } finally {
             app.ai.release()
             app.search.invalidate()
         }
-        if (embeddingsFailing && !isStopped) {
-            Log.w(TAG, "MiniLM fails even on a probe; embeddings are made again later")
+        if (unfinished && !isStopped) {
+            Log.w(TAG, "some of this run's work could not be done; it is tried again later")
             return Result.retry()
         }
         return Result.success()

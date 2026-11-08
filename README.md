@@ -72,6 +72,17 @@ minute each), screenshots and downloads first. Videos are described from three f
 (captions) and the middle frame (text). Captions, text reading and videos can each be switched
 off.
 
+When something goes wrong:
+
+- A picture that cannot be read (a damaged file) is listed as failed in the AI button's dialog,
+  and is not tried again until it changes. **Retry failed** there tries them all again.
+- When the AI itself fails on a picture, it is tried again in later runs, after the others. If
+  it keeps failing while the AI works for other pictures (three runs), it is set aside as
+  failed too. If the AI is failing on everything (the phone short of memory, say), nothing is
+  set aside: describing stops and starts again later.
+- What search by meaning needs is made with each description. If that part alone fails, the
+  description is kept and searchable by its words, and the rest is made later.
+
 **Text reading detail** (Settings → AI): *Balanced* (default) reads screenshots, downloads and
 messages in full detail and camera photos and videos at half size, about 10 seconds each instead
 of a minute; *Full* reads everything as thumbsup2 does; *Fast* reads everything at half size.

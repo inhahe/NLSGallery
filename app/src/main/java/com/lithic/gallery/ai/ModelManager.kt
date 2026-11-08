@@ -3,6 +3,7 @@ package com.lithic.gallery.ai
 import android.content.Context
 import com.lithic.gallery.core.ai.ModelStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -126,11 +127,14 @@ class ModelManager(private val context: Context) {
     suspend fun verifyCopied() = withContext(Dispatchers.IO) {
         for (key in sources.keys) {
             val lock = locks.getValue(key)
-            if (!lock.tryLock()) {
-                // Held by a download (minutes: skipped) or a check or delete (waited for).
-                if (key in downloading) continue
-                lock.lock()
+            // Held by a download (minutes: skipped), or a check or delete (seconds: waited for). A
+            // download can take it as a check lets go, so it is polled rather than queued for.
+            var downloadHasIt = false
+            while (!lock.tryLock()) {
+                if (key in downloading) { downloadHasIt = true; break }
+                delay(200)
             }
+            if (downloadHasIt) continue
             try {
                 val s = _state.value[key]
                 val look = when (s) {
