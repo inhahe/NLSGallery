@@ -39,6 +39,51 @@ class CraftTilingTest {
             println("${w}x$h budget $budget: ${xs.size}x${ys.size} tiles, largest $largest px, " +
                 "computing ${"%.2f".format(total.toDouble() / (w.toLong() * h))}× the pixels")
             assertWithMessage("${w}x$h largest tile").that(largest).isAtMost(budget)
+            // The accelerator's tiles: one size, each holding what the plain tile holds.
+            for ((cores, len) in listOf(xs to w, ys to h)) {
+                val plain = EasyOcr.windows(cores, len, margin, uniform = false)
+                val uniform = EasyOcr.windows(cores, len, margin, uniform = true)
+                assertWithMessage("${w}x$h one size").that(uniform.map { it.second - it.first }.toSet()).hasSize(1)
+                for ((p, u) in plain.zip(uniform)) {
+                    assertThat(u.first).isAtMost(p.first)
+                    assertThat(u.second).isAtLeast(p.second)
+                    assertThat(u.first).isAtLeast(0)
+                    assertThat(u.second).isAtMost(len)
+                    assertThat(u.first % 32).isEqualTo(0)
+                }
+            }
+            val uniformTile = EasyOcr.windows(xs, w, margin, true).first().let { it.second - it.first }.toLong() *
+                EasyOcr.windows(ys, h, margin, true).first().let { it.second - it.first }
+            assertWithMessage("${w}x$h uniform tile").that(uniformTile).isEqualTo(largest)
+        }
+    }
+
+    /**
+     * The accelerator's way (tiles all one size, each through a fixed-shape session), with the
+     * float32 graph and an accelerator that adds nothing: the same score maps as one run of the
+     * whole canvas, so the float16 graph is the only thing a GPU changes.
+     */
+    @Test
+    fun acceleratorTilesComputeTheSameScores() {
+        ModelTestSupport.store.weightsDir("craft")
+        EasyOcr(ModelTestSupport.onnx).use { ocr ->
+            ocr.accelerator = Accelerator { }
+            ocr.acceleratedGraph = "craft.onnx"
+            ocr.acceleratedFrom = 0
+            ocr.acceleratedCachePixels = Long.MAX_VALUE
+            var maxDiff = 0f
+            for (name in ref.keys.sorted()) {
+                val img = rawImage(name)
+                ocr.acceleratedMaxTilePixels = Long.MAX_VALUE
+                val whole = ocr.scoreMaps(img)
+                ocr.acceleratedMaxTilePixels = (whole.width * 2L) * (whole.height * 2L) * 6 / 10
+                val b = ocr.scoreMaps(img)
+                for (i in whole.text.indices) {
+                    maxDiff = maxOf(maxDiff, Math.abs(whole.text[i] - b.text[i]), Math.abs(whole.link[i] - b.link[i]))
+                }
+            }
+            println("accelerator tiles: max score difference from whole $maxDiff")
+            assertThat(maxDiff).isEqualTo(0f)
         }
     }
 

@@ -16,6 +16,8 @@ import com.lithic.gallery.data.EmbeddingEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,15 +44,29 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     private data class Config(val captions: Boolean, val ocr: Boolean, val threads: Int, val gpu: Boolean)
 
-    /**
-     * Whether the GPU computes the text detector as the CPU does on this phone: asked once a
-     * process (a driver can run a graph and get it wrong, as Adreno does BLIP's encoder), and
-     * false from the first time it fails.
-     */
-    private var gpuAgrees: Boolean? = null
+    /** Where the GPU stands for reading text, in this process. */
+    enum class Gpu {
+        /** Not looked for yet (looking loads its libraries, so it waits until wanted). */
+        UNKNOWN,
+        /** There is none the text detector runs on: not a Snapdragon, or no QNN plugin. */
+        NONE,
+        /** There is one: used, unless it fails its check. */
+        FOUND,
+        /** It computed the detector differently from the CPU, or failed: the CPU reads text until the app restarts. */
+        FAILED,
+    }
 
-    /** Whether this phone has a GPU the text detector can run on (a Snapdragon's). */
-    fun gpuAvailable(): Boolean = SnapdragonGpu.accelerator(ai.onnxruntime.OrtEnvironment.getEnvironment()) != null
+    private val _gpu = MutableStateFlow(Gpu.UNKNOWN)
+    val gpu: StateFlow<Gpu> = _gpu
+
+    /** Whether the GPU has been checked against the CPU this process (once: compiling a check takes seconds). */
+    private var gpuChecked = false
+
+    /** Looks for the GPU, loading its libraries the first time: call it off the main thread. */
+    fun lookForGpu() {
+        val found = SnapdragonGpu.accelerator(ai.onnxruntime.OrtEnvironment.getEnvironment()) != null
+        _gpu.compareAndSet(Gpu.UNKNOWN, if (found) Gpu.FOUND else Gpu.NONE)
+    }
 
     /** Whether the models for these settings are downloaded. */
     fun ready(s: Settings): Boolean =
@@ -330,9 +346,11 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         val o = Onnx(models.store, OnnxOptions(threads = s.aiThreads))
         onnx = o
         if (captions) blip = BlipCaptioner(o, tokenizer)
-        if (ocr) easyOcr = EasyOcr(o).also {
-            it.maxTilePixels = maxTilePixels()
-            if (want.gpu) useGpu(it, o)
+        if (ocr) {
+            // Kept before the GPU is tried, so closeModels closes it if trying throws.
+            val e = EasyOcr(o).also { easyOcr = it }
+            e.maxTilePixels = maxTilePixels()
+            if (want.gpu) useGpu(e, o)
         }
         minilm = MiniLmEmbedder(o, tokenizer)
         config = want
@@ -353,22 +371,26 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /** Hands [ocr]'s text detector to the GPU, if there is one and it computes it right. */
     private fun useGpu(ocr: EasyOcr, onnx: Onnx) {
-        if (gpuAgrees == false) return
-        val gpu = SnapdragonGpu.accelerator(onnx.env) ?: return
+        if (_gpu.value == Gpu.FAILED) return
+        val gpu = SnapdragonGpu.accelerator(onnx.env)
+        _gpu.compareAndSet(Gpu.UNKNOWN, if (gpu != null) Gpu.FOUND else Gpu.NONE)
+        if (gpu == null) return
         ocr.acceleratedCachePixels = gpuPixels(totalMemory())
         ocr.acceleratedMaxTilePixels = ocr.acceleratedCachePixels
         ocr.accelerator = gpu
-        if (gpuAgrees == null) {
-            gpuAgrees = ocr.acceleratorAgrees()
-            Log.i(TAG, "the GPU ${if (gpuAgrees == true) "agrees with" else "differs from"} the CPU on the text detector")
-        }
-        if (gpuAgrees != true) {
-            ocr.accelerator = null
-            return
+        if (!gpuChecked) {
+            gpuChecked = true
+            if (!ocr.acceleratorAgrees()) {
+                Log.w(TAG, "the GPU failed its check (computed the text detector differently from the CPU, or failed): text is read on the CPU")
+                _gpu.value = Gpu.FAILED
+                ocr.accelerator = null
+                return
+            }
+            Log.i(TAG, "the GPU computes the text detector as the CPU does")
         }
         ocr.onAcceleratorFailed = { e ->
-            Log.w(TAG, "the GPU failed; text is read on the CPU from now on", e)
-            gpuAgrees = false
+            Log.w(TAG, "the GPU failed; text is read on the CPU until the app restarts", e)
+            _gpu.value = Gpu.FAILED
         }
     }
 

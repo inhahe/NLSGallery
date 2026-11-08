@@ -25,11 +25,12 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
     var canvasSize = DEFAULT_CANVAS
 
     /**
-     * Runs the detector (CRAFT) where set, in float16 ([ACCELERATED_GRAPH]), on inputs of at
-     * least [acceleratedFrom] pixels, in tiles of at most [acceleratedMaxTilePixels]; the CPU runs
-     * the rest. It needs fixed shapes, so each input shape gets a session of its own, kept while
-     * the shapes open add up to [acceleratedCachePixels]. If it fails, it is dropped (the CPU
-     * takes over) and [onAcceleratorFailed] told.
+     * Runs the detector (CRAFT) where set, in float16 ([acceleratedGraph]), on canvases whose
+     * tiles (of at most [acceleratedMaxTilePixels], all one shape) are at least [acceleratedFrom]
+     * pixels; the CPU runs the rest, tiled to its own budget. It needs fixed shapes, so each tile
+     * shape gets a session of its own, kept while the shapes open add up to
+     * [acceleratedCachePixels]. If it fails, it is dropped (the CPU takes over) and
+     * [onAcceleratorFailed] told.
      *
      * Float16 departs from EasyOCR's float32 by about one part in a thousand of a score, which
      * moves a text box by a pixel now and then (see design.md).
@@ -41,17 +42,17 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         }
 
     /**
-     * Inputs this large go to the accelerator at once; smaller ones from [acceleratedRepeatFrom]
+     * Tiles this large go to the accelerator at once; smaller ones from [acceleratedRepeatFrom]
      * once their shape has been seen before. Compiling a session for a shape costs about as much
      * as the CPU takes for this many pixels, so a shape met once is not worth it below it, and
      * shapes do recur (a camera's photos, a phone's screenshots).
      */
     var acceleratedFrom = DEFAULT_ACCELERATED_FROM
 
-    /** The smallest input the accelerator takes, the second time its shape comes. */
+    /** The smallest tile the accelerator takes, the second time its shape comes. */
     var acceleratedRepeatFrom = DEFAULT_ACCELERATED_REPEAT_FROM
 
-    /** The input shapes met so far, (height, width). */
+    /** The accelerator's tile shapes met so far, (height, width). */
     private val shapesSeen = HashSet<Pair<Int, Int>>()
 
     /** The accelerator's tile budget, bounding a session's memory as [maxTilePixels] does the CPU's. */
@@ -64,6 +65,9 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
     var acceleratedCachePixels = DEFAULT_ACCELERATED_MAX_TILE_PIXELS
 
     var onAcceleratorFailed: (Exception) -> Unit = {}
+
+    /** The graph the accelerator runs (tests give it the float32 one, to check its tiling to the bit). */
+    var acceleratedGraph = ACCELERATED_GRAPH
 
     /** Fixed-shape sessions on the accelerator, by (height, width), least recently used first. */
     private val accelerated = LinkedHashMap<Pair<Int, Int>, OrtSession>(4, 0.75f, true)
@@ -80,15 +84,20 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         while (accelerated.isNotEmpty() && accelerated.keys.sumOf { (sh, sw) -> sh.toLong() * sw } + need > acceleratedCachePixels) {
             accelerated.remove(accelerated.keys.first())?.close()
         }
-        return onnx.session("craft", ACCELERATED_GRAPH, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).also { accelerated[h to w] = it }
+        return onnx.session("craft", acceleratedGraph, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).also { accelerated[h to w] = it }
     }
 
-    /** CRAFT on [input] (1×3×[h]×[w]): on the accelerator if it should take it, else the CPU. */
-    private fun runCraft(input: FloatArray, h: Int, w: Int): FloatArray {
-        val acc = accelerator
+    /** Whether the accelerator should take tiles of [h]×[w]; the shape is noted as seen either way. */
+    private fun wantsAccelerator(h: Int, w: Int): Boolean {
         val pixels = h.toLong() * w
         val repeated = !shapesSeen.add(h to w)
-        if (acc != null && (pixels >= acceleratedFrom || (repeated && pixels >= acceleratedRepeatFrom))) {
+        return accelerator != null && (pixels >= acceleratedFrom || (repeated && pixels >= acceleratedRepeatFrom))
+    }
+
+    /** CRAFT on [input] (1×3×[h]×[w]) on the accelerator; on the CPU once it has failed (it is dropped then). */
+    private fun runAccelerated(input: FloatArray, h: Int, w: Int): FloatArray {
+        val acc = accelerator
+        if (acc != null) {
             try {
                 return run(acceleratedSession(acc, h, w), input, h, w)
             } catch (e: Exception) {
@@ -117,7 +126,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         val input = FloatArray(3 * h * w) { ((it * 2654435761L) % 1000).toFloat() / 500f - 1f }
         val cpu = run(craft, input, h, w)
         val got = try {
-            onnx.session("craft", ACCELERATED_GRAPH, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).use { run(it, input, h, w) }
+            onnx.session("craft", acceleratedGraph, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).use { run(it, input, h, w) }
         } catch (e: Exception) {
             return false
         }
@@ -195,11 +204,28 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         // CRAFT's activations take ~1.3 KB per input pixel (6 GB at thumbsup2's 2560×1920), so a
         // large canvas is run in overlapping tiles: each output pixel comes from the tile in whose
         // core it lies, at least [tileMargin] input pixels from a tile edge that is not the image's.
-        val budget = if (accelerator != null) minOf(maxTilePixels, acceleratedMaxTilePixels) else maxTilePixels
-        val (xs, ys) = tilePlan(tw32, th32, budget, tileMargin)
-        for ((cy0, cy1) in ys) for ((cx0, cx1) in xs) {
-            val y0 = maxOf(0, cy0 - tileMargin); val y1 = minOf(th32, cy1 + tileMargin)
-            val x0 = maxOf(0, cx0 - tileMargin); val x1 = minOf(tw32, cx1 + tileMargin)
+        // The accelerator's tiles are all one shape (edge tiles reach further in), so one session
+        // serves a canvas; when that shape is not one it should take, the CPU runs the canvas, cut
+        // to its own budget.
+        var onAccelerator = false
+        var plan = tilePlan(tw32, th32, maxTilePixels, tileMargin)
+        if (accelerator != null) {
+            val tiled = tilePlan(tw32, th32, minOf(maxTilePixels, acceleratedMaxTilePixels), tileMargin)
+            val shapeH = windows(tiled.second, th32, tileMargin, uniform = true).first().let { (a, b) -> b - a }
+            val shapeW = windows(tiled.first, tw32, tileMargin, uniform = true).first().let { (a, b) -> b - a }
+            if (wantsAccelerator(shapeH, shapeW)) {
+                plan = tiled
+                onAccelerator = true
+            }
+        }
+        val (xs, ys) = plan
+        val xw = windows(xs, tw32, tileMargin, uniform = onAccelerator)
+        val yw = windows(ys, th32, tileMargin, uniform = onAccelerator)
+        for (i in ys.indices) for (j in xs.indices) {
+            val (cy0, cy1) = ys[i]
+            val (cx0, cx1) = xs[j]
+            val (y0, y1) = yw[i]
+            val (x0, x1) = xw[j]
             val h = y1 - y0
             val w = x1 - x0
             val tile = if (h == th32 && w == tw32) input else FloatArray(3 * h * w).also { t ->
@@ -207,7 +233,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
                     System.arraycopy(input, c * plane + (y0 + y) * tw32 + x0, t, c * h * w + y * w, w)
                 }
             }
-            val scores = runCraft(tile, h, w)
+            val scores = if (onAccelerator) runAccelerated(tile, h, w) else run(craft, tile, h, w)
             val outW = w / 2
             for (my in cy0 / 2 until cy1 / 2) for (mx in cx0 / 2 until cx1 / 2) {
                 val s = ((my - y0 / 2) * outW + (mx - x0 / 2)) * 2
@@ -261,6 +287,22 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
                 }
             }
             return best ?: fallback!!
+        }
+
+        /**
+         * What the tiles with [cores] (from [tilePlan]) along a side of [length] see: each core
+         * with [margin] more on both sides, within the image. With [uniform], each is widened
+         * inward to the widest of them, so every tile has one size (an accelerator compiles a
+         * session per size); the widest is the one [tilePlan] fitted to the budget.
+         */
+        internal fun windows(cores: List<Pair<Int, Int>>, length: Int, margin: Int, uniform: Boolean): List<Pair<Int, Int>> {
+            val plain = cores.map { (s, e) -> maxOf(0, s - margin) to minOf(length, e + margin) }
+            if (!uniform) return plain
+            val size = plain.maxOf { (a, b) -> b - a }
+            return plain.map { (a, _) ->
+                val end = minOf(length, a + size)
+                (end - size) to end
+            }
         }
 
         /** [length] (a multiple of 32) cut into [n] consecutive ranges of nearly equal length, multiples of 32. */

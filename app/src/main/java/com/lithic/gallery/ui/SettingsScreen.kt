@@ -25,11 +25,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.data.LayoutMode
 import com.lithic.gallery.data.Settings
 import com.lithic.gallery.data.TextDetail
@@ -41,7 +43,8 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
     BackHandler(onBack = onBack)
     val s by vm.settings.collectAsState()
     val ai by vm.aiStatus.collectAsState()
-    val gpu by vm.gpuAvailable.collectAsState()
+    val gpu by vm.gpu.collectAsState()
+    LaunchedEffect(Unit) { vm.lookForGpu() }
     fun set(change: (Settings) -> Settings) = vm.updateSettings(change)
     Scaffold(topBar = {
         TopAppBar(
@@ -111,17 +114,23 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
             )) {
                 Choice(label, about, s.textDetail == detail) { set { it.copy(textDetail = detail) } }
             }
+            val gpuHere = gpu == AiEngine.Gpu.FOUND || gpu == AiEngine.Gpu.FAILED
             Toggle("Read text on the GPU",
-                if (gpu) "This phone's Snapdragon GPU finds text about five times as fast. In half precision: " +
-                    "now and then a word reads differently from thumbsup2's"
-                else "This phone has no GPU the text reader runs on: it uses the processor",
-                s.gpuText && gpu, enabled = gpu) { v -> set { it.copy(gpuText = v) } }
+                when (gpu) {
+                    AiEngine.Gpu.UNKNOWN -> "Looking for the GPU…"
+                    AiEngine.Gpu.NONE -> "This phone has no GPU the text reader runs on: it uses the processor"
+                    AiEngine.Gpu.FOUND -> "This phone's Snapdragon GPU finds text about five times as fast. In half " +
+                        "precision: now and then a word reads differently from thumbsup2's"
+                    AiEngine.Gpu.FAILED -> "This phone's GPU failed its check, so the processor reads text until the app restarts"
+                },
+                s.gpuText && gpuHere, enabled = gpuHere) { v -> set { it.copy(gpuText = v) } }
             SliderRow("Processor threads", if (s.aiThreads == 0) "automatic" else "${s.aiThreads}",
                 s.aiThreads.toFloat(), 0f..8f, steps = 7) { v -> set { it.copy(aiThreads = v.roundToInt()) } }
 
             Section("Search")
             Hint("Search looks in the AI description, the text in the picture, the file's own caption, its name and folder, as " +
-                "thumbsup2's search does: matching words (with typos and word starts) blended with matching meaning.")
+                "thumbsup2's search does: matching words (with typos and word starts) blended with matching meaning. " +
+                "Add when (\"beach last summer\", \"dog 2023\", \"christmas\") to look among the pictures taken then.")
             Spacer(Modifier.height(32.dp))
         }
     }

@@ -40,9 +40,9 @@ class DatePhrases(
 ) {
     /**
      * A query with its date phrase taken out: [text] is what is left to search for as words
-     * (empty when the query was only a date), [phrase] the words the date was read from.
+     * (empty when the query was only a date).
      */
-    data class DateQuery(val text: String, val filter: DateFilter, val phrase: String)
+    data class DateQuery(val text: String, val filter: DateFilter)
 
     /** The days from [from] to [until], [until] excluded. */
     data class Span(val from: LocalDate, val until: LocalDate) {
@@ -78,87 +78,32 @@ class DatePhrases(
     /** [query] with its date phrase taken out, or null when it has none. */
     fun parse(query: String): DateQuery? {
         val q = " " + normalize(query) + " "
-        for (rule in rules) for (m in rule.regex.findAll(q)) {
+        for (rule in RULES) for (m in rule.regex.findAll(q)) {
             // "photos from christmas 2022": the words leading into the phrase go with it, and
-            // words that only say "pictures" are not something to search for.
+            // words that only ask for pictures ("show me photos of") are not searched for.
             val before = words(q.substring(0, m.range.first)).dropLastWhile { it in LEAD_IN }
-            val rest = before + words(q.substring(m.range.last + 1))
+            val rest = withoutRequest(before + words(q.substring(m.range.last + 1)))
             val text = if (rest.all { it in FILLER }) "" else rest.joinToString(" ")
             if (rule.alone && text.isNotEmpty()) continue
-            val filter = rule.make(m.groupValues) ?: continue
-            return DateQuery(text, filter, m.value)
+            val filter = rule.make(this, m.groupValues) ?: continue
+            return DateQuery(text, filter)
         }
         return null
     }
 
     // Rules, tried in order: the first whose phrase is in the query and makes sense wins.
 
-    /** A phrase ([pattern], between spaces) and the filter it stands for, from its groups (0 the whole). */
-    private class Rule(pattern: String, val alone: Boolean = false, val make: (List<String>) -> DateFilter?) {
+    /**
+     * A phrase ([pattern], between spaces) and the filter it stands for on a given today, from its
+     * groups (0 the whole); [alone] when it is a date only as the whole query.
+     */
+    private class Rule(pattern: String, val alone: Boolean = false, val make: DatePhrases.(List<String>) -> DateFilter?) {
         val regex = Regex("(?<= )(?:$pattern)(?= )")
     }
 
     private val tomorrow: LocalDate = today.plusDays(1)
     private val dayFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
 
-    private val rules: List<Rule> = listOf(
-        // Years: ranges and bounds.
-        Rule("between $YEAR and $YEAR") { g -> yearRange(g[1].toInt(), g[2].toInt()) },
-        Rule("$YEAR ?(?:-|to|until|till|through) ?$YEAR") { g -> yearRange(g[1].toInt(), g[2].toInt()) },
-        Rule("since $YEAR") { g -> g[1].toInt().takeIf { it <= today.year }?.let { explained(g[0], Span(jan1(it), tomorrow)) } },
-        Rule("after $YEAR") { g -> g[1].toInt().takeIf { it < today.year }?.let { explained(g[0], Span(jan1(it + 1), tomorrow)) } },
-        Rule("before $YEAR") { g -> Within(listOf(Span(EARLIEST, jan1(g[1].toInt()))), g[0]) },
-        // Days.
-        Rule("(\\d{4})-(\\d{1,2})-(\\d{1,2})") { g -> day(g[1].toInt(), g[2].toInt(), g[3].toInt()) },
-        Rule("(\\d{1,2})/(\\d{1,2})/(\\d{4}|\\d{2})") { g ->
-            val a = g[1].toInt()
-            val b = g[2].toInt()
-            if (monthFirst) day(year(g[3]), a, b) else day(year(g[3]), b, a)
-        },
-        Rule("(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4}|\\d{2})") { g -> day(year(g[3]), g[2].toInt(), g[1].toInt()) },
-        Rule("$MONTH $DAY $YEAR") { g -> day(g[3].toInt(), month(g[1]), g[2].toInt()) },
-        Rule("$DAY (?:of )?$MONTH $YEAR") { g -> day(g[3].toInt(), month(g[2]), g[1].toInt()) },
-        Rule("$MONTH $DAY") { g -> latestDay(month(g[1]), g[2].toInt()) },
-        Rule("$DAY (?:of )?$MONTH") { g -> latestDay(month(g[2]), g[1].toInt()) },
-        Rule("today|tonight|this morning|this afternoon|this evening") { g -> explained(g[0], Span(today, tomorrow)) },
-        Rule("the day before yesterday") { g -> explained(g[0], Span(today.minusDays(2), today.minusDays(1))) },
-        Rule("yesterday") { g -> explained(g[0], Span(today.minusDays(1), today)) },
-        Rule("last night") { g -> explained(g[0], Span(today.minusDays(1), tomorrow)) },
-        // Counting back: "the past 3 months", "two weeks ago".
-        Rule("(?:the )?(?:past|last|previous) $NUMBER $UNIT") { g -> rolling(numbers(g[1]).last, g[2]) },
-        Rule("(?:the )?past (day|week|month|year)") { g -> rolling(1, g[1]) },
-        Rule("$NUMBER $UNIT ago") { g -> ago(g[0], numbers(g[1]), g[2]) },
-        // The calendar: "last week", "this month", "last weekend".
-        Rule("(last|this|previous) (week|weekend|month|year)") { g -> calendar(g[1] != "this", g[2]) },
-        // The latest of something yearly: "last summer", "this march", "last christmas".
-        Rule("(last|this|previous) $SEASON") { g -> occurrence(g[1] != "this") { y -> seasonSpan(g[2], y) } },
-        Rule("(last|this|previous) $HOLIDAY") { g -> occurrence(g[1] != "this") { y -> holidaySpan(g[2], y) } },
-        Rule("(last|this|previous) $MONTH") { g -> occurrence(g[1] != "this") { y -> monthSpan(month(g[2]), y) } },
-        Rule("(?:last|previous) $WEEKDAY") { g -> weekday(g[1], strictlyBefore = true) },
-        Rule("(?:this|on) $WEEKDAY") { g -> weekday(g[1], strictlyBefore = false) },
-        // With a year: "summer 2023", "christmas of 2022", "march 2023".
-        Rule("$SEASON (?:of )?$YEAR") { g -> seasonIn(g[1], g[2].toInt()) },
-        Rule("$YEAR $SEASON") { g -> seasonIn(g[2], g[1].toInt()) },
-        Rule("$HOLIDAY (?:of )?$YEAR") { g -> holidaySpan(g[1], g[2].toInt()) },
-        Rule("$YEAR $HOLIDAY") { g -> holidaySpan(g[2], g[1].toInt()) },
-        Rule("$MONTH (?:of )?$YEAR") { g -> monthSpan(month(g[1]), g[2].toInt()) },
-        Rule("$YEAR $MONTH") { g -> monthSpan(month(g[2]), g[1].toInt()) },
-        // Decades: "the 90s", "1990s". A bare "90s" is also a style ("90s fashion").
-        Rule("(?:the )?(19|20)(\\d)0'?s") { g -> decade(g[1].toInt(), g[2].toInt()) },
-        Rule("the (\\d)0'?s") { g -> decade(null, g[1].toInt()) },
-        Rule("(\\d)0'?s", alone = true) { g -> decade(null, g[1].toInt()) },
-        // A year, not one still to come ("2048" is more likely the game).
-        Rule(YEAR) { g -> g[1].toInt().takeIf { it <= today.year }?.let { named(it.toString(), Span(jan1(it), jan1(it + 1))) } },
-        // Every year: "in summer", "in july", "at christmas".
-        Rule("(?:in|during) (?:the )?$SEASON") { g -> everySeason(g[1]) },
-        Rule("(?:in|during) $MONTH") { g -> everyMonth(month(g[1])) },
-        Rule("(?:on|at|over|during) $HOLIDAY") { g -> everyHoliday(g[1]) },
-        // Words that are dates only when they are all there is.
-        Rule(SEASON, alone = true) { g -> everySeason(g[1]) },
-        Rule(HOLIDAY, alone = true) { g -> everyHoliday(g[1]) },
-        Rule(MONTH_ALONE, alone = true) { g -> everyMonth(month(g[1])) },
-        Rule(WEEKDAY, alone = true) { g -> weekday(g[1], strictlyBefore = false) },
-    )
 
     // Filters.
 
@@ -445,6 +390,67 @@ class DatePhrases(
     private fun month(s: String): Int = MONTH_PREFIXES.indexOfFirst { s.startsWith(it) } + 1
 
     companion object {
+        private val RULES: List<Rule> = listOf(
+            // Years: ranges and bounds.
+            Rule("between $YEAR and $YEAR") { g -> yearRange(g[1].toInt(), g[2].toInt()) },
+            Rule("$YEAR ?(?:-|to|until|till|through) ?$YEAR") { g -> yearRange(g[1].toInt(), g[2].toInt()) },
+            // Open-ended: a picture dated ahead by a wrong clock still counts, and "after 2026" in
+            // 2026 is an empty date, not 2026.
+            Rule("since $YEAR") { g -> named(g[0], Span(jan1(g[1].toInt()), LATEST)) },
+            Rule("after $YEAR") { g -> named(g[0], Span(jan1(g[1].toInt() + 1), LATEST)) },
+            Rule("before $YEAR") { g -> Within(listOf(Span(EARLIEST, jan1(g[1].toInt()))), g[0]) },
+            // Days.
+            Rule("(\\d{4})-(\\d{1,2})-(\\d{1,2})") { g -> day(g[1].toInt(), g[2].toInt(), g[3].toInt()) },
+            Rule("(\\d{1,2})/(\\d{1,2})/(\\d{4}|\\d{2})") { g ->
+                val a = g[1].toInt()
+                val b = g[2].toInt()
+                if (monthFirst) day(year(g[3]), a, b) else day(year(g[3]), b, a)
+            },
+            Rule("(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4}|\\d{2})") { g -> day(year(g[3]), g[2].toInt(), g[1].toInt()) },
+            Rule("$MONTH $DAY $YEAR") { g -> day(g[3].toInt(), month(g[1]), g[2].toInt()) },
+            Rule("$DAY (?:of )?$MONTH $YEAR") { g -> day(g[3].toInt(), month(g[2]), g[1].toInt()) },
+            Rule("$MONTH $DAY") { g -> latestDay(month(g[1]), g[2].toInt()) },
+            Rule("$DAY (?:of )?$MONTH") { g -> latestDay(month(g[2]), g[1].toInt()) },
+            Rule("today|tonight|this morning|this afternoon|this evening") { g -> explained(g[0], Span(today, tomorrow)) },
+            Rule("the day before yesterday") { g -> explained(g[0], Span(today.minusDays(2), today.minusDays(1))) },
+            Rule("yesterday") { g -> explained(g[0], Span(today.minusDays(1), today)) },
+            Rule("last night") { g -> explained(g[0], Span(today.minusDays(1), tomorrow)) },
+            // Counting back: "the past 3 months", "two weeks ago".
+            Rule("(?:the )?(?:past|last|previous) $NUMBER $UNIT") { g -> rolling(numbers(g[1]).last, g[2]) },
+            Rule("(?:the )?past (day|week|month|year)") { g -> rolling(1, g[1]) },
+            Rule("$NUMBER $UNIT ago") { g -> ago(g[0], numbers(g[1]), g[2]) },
+            // The calendar: "last week", "this month", "last weekend".
+            Rule("(last|this|previous) (week|weekend|month|year)") { g -> calendar(g[1] != "this", g[2]) },
+            // The latest of something yearly: "last summer", "this march", "last christmas".
+            Rule("(last|this|previous) $SEASON") { g -> occurrence(g[1] != "this") { y -> seasonSpan(g[2], y) } },
+            Rule("(last|this|previous) $HOLIDAY") { g -> occurrence(g[1] != "this") { y -> holidaySpan(g[2], y) } },
+            Rule("(last|this|previous) $MONTH") { g -> occurrence(g[1] != "this") { y -> monthSpan(month(g[2]), y) } },
+            Rule("(?:last|previous) $WEEKDAY") { g -> weekday(g[1], strictlyBefore = true) },
+            Rule("(?:this|on) $WEEKDAY") { g -> weekday(g[1], strictlyBefore = false) },
+            // With a year: "summer 2023", "christmas of 2022", "march 2023".
+            Rule("$SEASON (?:of )?$YEAR") { g -> seasonIn(g[1], g[2].toInt()) },
+            Rule("$YEAR $SEASON") { g -> seasonIn(g[2], g[1].toInt()) },
+            Rule("$HOLIDAY (?:of )?$YEAR") { g -> holidaySpan(g[1], g[2].toInt()) },
+            Rule("$YEAR $HOLIDAY") { g -> holidaySpan(g[2], g[1].toInt()) },
+            Rule("$MONTH (?:of )?$YEAR") { g -> monthSpan(month(g[1]), g[2].toInt()) },
+            Rule("$YEAR $MONTH") { g -> monthSpan(month(g[2]), g[1].toInt()) },
+            // Decades: "the 90s", "1990s". A bare "90s" is also a style ("90s fashion").
+            Rule("(?:the )?(19|20)(\\d)0'?s") { g -> decade(g[1].toInt(), g[2].toInt()) },
+            Rule("the (\\d)0'?s") { g -> decade(null, g[1].toInt()) },
+            Rule("(\\d)0'?s", alone = true) { g -> decade(null, g[1].toInt()) },
+            // A year, not one still to come ("2048" is more likely the game).
+            Rule(YEAR) { g -> g[1].toInt().takeIf { it <= today.year }?.let { named(it.toString(), Span(jan1(it), jan1(it + 1))) } },
+            // Every year: "in summer", "in july", "at christmas".
+            Rule("(?:in|during) (?:the )?$SEASON") { g -> everySeason(g[1]) },
+            Rule("(?:in|during) $MONTH") { g -> everyMonth(month(g[1])) },
+            Rule("(?:on|at|over|during) $HOLIDAY") { g -> everyHoliday(g[1]) },
+            // Words that are dates only when they are all there is.
+            Rule(SEASON, alone = true) { g -> everySeason(g[1]) },
+            Rule(HOLIDAY, alone = true) { g -> everyHoliday(g[1]) },
+            Rule(MONTH_ALONE, alone = true) { g -> everyMonth(month(g[1])) },
+            Rule(WEEKDAY, alone = true) { g -> weekday(g[1], strictlyBefore = false) },
+        )
+
         private const val YEAR = "((?:19|20)\\d\\d)"
         private const val DAY = "(\\d{1,2})(?:st|nd|rd|th)?"
         private const val MONTH = "(january|february|march|april|may|june|july|august|september|october|november|december|" +
@@ -453,7 +459,7 @@ class DatePhrases(
         private const val MONTH_ALONE = "(january|february|march|april|june|july|august|september|october|november|december)"
         private const val SEASON = "(spring|summer|autumn|fall|winter)"
         private const val HOLIDAY = "(christmas eve|christmas day|christmas|xmas|new year'?s eve|new year'?s day|new year'?s|new year|" +
-            "halloween|valentine'?s day|valentine'?s|thanksgiving|easter|fourth of july|july fourth|independence day)"
+            "halloween|valentine'?s day|valentine'?s|valentine|thanksgiving|easter|fourth of july|july fourth|independence day)"
         private const val WEEKDAY = "(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
         private const val NUMBER = "(\\d{1,3}|a couple of|a couple|couple of|a few|few|several|an?|one|two|three|four|five|six|seven|" +
             "eight|nine|ten|eleven|twelve)"
@@ -463,6 +469,7 @@ class DatePhrases(
         /** "the past 500 years" is not a date anyone means. */
         private const val MAX_COUNT = 200
         private val EARLIEST: LocalDate = LocalDate.of(1800, 1, 1)
+        private val LATEST: LocalDate = LocalDate.of(9999, 1, 1)
 
         /** Words that lead into a date ("taken in 2023", "from last summer"): they go with it. */
         private val LEAD_IN = setOf("in", "on", "from", "during", "at", "around", "taken", "shot", "of")
@@ -478,6 +485,35 @@ class DatePhrases(
             .replace(Regex("\\s+"), " ").trim()
 
         private fun words(s: String): List<String> = s.split(' ').filter { it.isNotEmpty() }
+
+        /**
+         * [words] without the request they open with, if any: "show me photos of dogs" is a
+         * search for dogs. A request is a verb ("show me", "find") or a word for pictures
+         * followed by "of", "from", "with"... ("photos of"), with "all", "my", "the" between;
+         * a word for pictures alone stays ("photo booth"). Videos are not asked for so: the word
+         * says which kind.
+         */
+        private fun withoutRequest(words: List<String>): List<String> {
+            var i = 0
+            val verb = words.getOrNull(0) in REQUEST_VERBS
+            if (verb) {
+                i++
+                if (words.getOrNull(i) == "me") i++
+            }
+            while (words.getOrNull(i) in DETERMINERS) i++
+            if (words.getOrNull(i) !in PICTURE_WORDS) return if (verb) words.drop(i) else words
+            i++
+            val preposition = words.getOrNull(i) in REQUEST_PREPOSITIONS
+            if (preposition) i++
+            if (!verb && !preposition) return words
+            while (words.getOrNull(i) in DETERMINERS) i++
+            return words.drop(i)
+        }
+
+        private val REQUEST_VERBS = setOf("show", "find")
+        private val DETERMINERS = setOf("all", "my", "the", "a", "an", "any", "some")
+        private val PICTURE_WORDS = setOf("photo", "photos", "picture", "pictures", "pic", "pics", "image", "images", "shots")
+        private val REQUEST_PREPOSITIONS = setOf("of", "from", "with", "showing", "taken", "in", "on", "at")
 
         /**
          * Phrases read as they are meant where [locale] is set: which hemisphere's seasons, the

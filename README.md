@@ -45,7 +45,8 @@ blended as in thumbsup2. A dot on a thumbnail marks a result found by meaning al
 the search field choose where to look, and can limit results to the current tab.
 
 **Dates.** Say when, in plain English: "beach last summer", "dog 2023", "christmas", "flowers in
-may", "two weeks ago", "yesterday", "march 5", "the 90s", "since 2020", "between 2019 and 2021".
+may", "two weeks ago", "yesterday", "march 5", "the 90s", "since 2020", "between 2019 and 2021",
+even "show me photos of dogs from last summer".
 The search then looks only among the pictures taken then; a date on its own lists them all,
 newest first (which works before anything is described). A chip under the search field shows
 how the date was read ("summer 2026: Jun 1, 2026 – Aug 31, 2026"); tap it to search for those

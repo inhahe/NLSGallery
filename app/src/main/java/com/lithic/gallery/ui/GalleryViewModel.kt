@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.lithic.gallery.GalleryApp
+import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
 import com.lithic.gallery.core.search.DatePhrases
@@ -19,6 +20,7 @@ import com.lithic.gallery.work.Work
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +28,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onEach
@@ -98,15 +102,38 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     val query = MutableStateFlow("")
 
-    /** A query whose date phrase is to be searched for as words: the user dismissed the date read in it. */
-    val dateDismissed = MutableStateFlow<String?>(null)
+    /**
+     * The query whose date phrase is searched for as words (the user dismissed the date read in
+     * it), until the query changes.
+     */
+    private val dateDismissed = MutableStateFlow<String?>(null)
+
+    /** Today, moving on at midnight, so "today" or "this week" in an open search moves with it. */
+    private val today: StateFlow<LocalDate> = flow {
+        while (true) {
+            val now = LocalDate.now()
+            emit(now)
+            val midnight = now.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            delay(maxOf(1_000L, midnight - System.currentTimeMillis()))
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, LocalDate.now())
 
     /** The query (settled for a moment) and the date read in it, unless dismissed. */
-    private val parsedQuery: StateFlow<ParsedQuery> = combine(query.debounce(250), dateDismissed) { q, dismissed ->
-        ParsedQuery(q, if (q.isBlank() || q == dismissed) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q))
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, ParsedQuery("", null))
+    private val parsedQuery: StateFlow<ParsedQuery> = combine(query.debounce(250), dateDismissed, today) { q, dismissed, day ->
+        ParsedQuery(q, if (q.isBlank() || q == dismissed) null else DatePhrases.forLocale(day, Locale.getDefault()).parse(q))
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, ParsedQuery("", null))
 
     private data class ParsedQuery(val text: String, val date: DatePhrases.DateQuery?)
+
+    /** Searches for the words of the date phrase shown instead (the × on its chip). */
+    fun dismissDate() {
+        dateDismissed.value = parsedQuery.value.text
+    }
+
+    init {
+        // A dismissal lasts until the query changes.
+        viewModelScope.launch { query.collect { q -> if (q != dateDismissed.value) dateDismissed.value = null } }
+    }
 
     /** The date read in the query, for the user to check and dismiss; null when none is. */
     val searchDate: StateFlow<DatePhrases.DateQuery?> = parsedQuery.map { it.date }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -130,15 +157,19 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val s = input.settings
             val zone = ZoneId.systemDefault()
             val dates = q.date?.filter
-            fun wanted(item: MediaEntity): Boolean =
+            // The files the search may find, worked out once (the search asks per candidate,
+            // holding its index's lock); null for all.
+            val allowed: List<MediaEntity>? = if (!s.searchCurrentTabOnly && dates == null) null else input.all.filter { item ->
                 (!s.searchCurrentTabOnly || Categories.shows(input.category, item.folderCategory, item.isVideo, s.videosInFolderTabs)) &&
                     (dates == null || dates.matches(Instant.ofEpochMilli(item.sortDate).atZone(zone).toLocalDate()))
-            if (q.date != null && q.date.text.isEmpty()) return@mapLatest input.all.filter(::wanted).map { SearchHit(it, null) }
+            }
+            if (q.date != null && q.date.text.isEmpty()) return@mapLatest allowed!!.map { SearchHit(it, null) }
             val byId = input.all.associateBy { it.id }
             val fields = HybridSearch.FIELDS.filter { it in s.searchFields }
-            app.search.search(q.date?.text ?: q.text, fields) { id -> byId[id]?.let(::wanted) == true }
+            val ids = allowed?.mapTo(HashSet()) { it.id }
+            app.search.search(q.date?.text ?: q.text, fields, ids?.let { a -> { id: Long -> id in a } })
                 .mapNotNull { r -> byId[r.mediaId]?.let { SearchHit(it, r) } }
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private data class SearchInput(val query: ParsedQuery, val settings: Settings, val category: Category, val all: List<MediaEntity>)
 
@@ -173,12 +204,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     val modelStates: StateFlow<Map<String, ModelState>> = app.models.state
 
-    /**
-     * Whether this phone has a GPU the text reader runs on (a Snapdragon's): false until known,
-     * found off the main thread, as finding it loads the GPU's libraries.
-     */
-    val gpuAvailable: StateFlow<Boolean> = MutableStateFlow(false).also { found ->
-        viewModelScope.launch(Dispatchers.Default) { found.value = app.ai.gpuAvailable() }
+    /** Where the GPU stands for reading text (Settings shows it). */
+    val gpu: StateFlow<AiEngine.Gpu> = app.ai.gpu
+
+    /** Looks for the GPU, off the main thread: it loads the GPU's libraries, so only Settings asks. */
+    fun lookForGpu() {
+        viewModelScope.launch(Dispatchers.Default) { app.ai.lookForGpu() }
     }
 
     /** Displayed aspect ratios learned from thumbnails, by media id (see [recordAspect]). */

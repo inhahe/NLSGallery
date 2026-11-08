@@ -253,12 +253,13 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   before it. Queries are embedded with a MiniLM session kept for search, freed (about 90 MB)
   when the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM
   is removed. `search` takes an `accept` (by media id) that narrows the candidates before
-  ranking (`HybridSearch`): the view model passes "taken on these days" and "in this tab".
+  ranking (`HybridSearch`): the view model passes the set of files taken on those days and in
+  this tab, worked out once per search (off the main thread, like the whole search flow).
 - **Dates in a query** (`core/search/DatePhrases`, `DatePhrasesTest` at a fixed today): the
   first date phrase is taken out of the query and becomes a filter on the day each file was
   taken (`sortDate` in the phone's time zone); the rest is searched as words. Rules are tried in
-  order, most specific first: year ranges and bounds ("2019-2021", "since 2020", "before
-  2010"), days (ISO, 3/5/2024 in the locale's order, "march 5th 2023", "march 5": the latest
+  order, most specific first: year ranges and bounds ("2019-2021", "before 2010"; "since 2020"
+  and "after 2020" are open-ended, so a year still to come is an empty date, not that year), days (ISO, 3/5/2024 in the locale's order, "march 5th 2023", "march 5": the latest
   one not after today), today/yesterday/last night, counting back ("the past 3 months", "two
   weeks ago", "a few days ago": 2 to 4), the calendar ("last week" by the locale's first day,
   "this weekend", "last year"), the latest of something yearly ("last summer": the latest over;
@@ -272,16 +273,23 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   also an ordinary word (a month, season, holiday, weekday, a bare "90s") is a date only with
   something that makes it one ("last", "in", a year) or when it is the whole query: "christmas
   tree" searches for Christmas trees; "may" is never a date alone. Words leading into the phrase
-  ("taken in", "from") go with it, and words that only say "pictures" ("show me photos from")
-  are not searched for. A date alone lists every file taken then, newest first (`SearchHit`
-  without a result), which works before anything is described. The filter's label ("summer
-  2026: Jun 1, 2026 – Aug 31, 2026") shows as a chip above the results; its × searches the
-  query as words instead (`GalleryViewModel.dateDismissed`, until the query changes).
+  ("taken in", "from") go with it, and a request the rest opens with is not searched for: "show
+  me photos of dogs from last summer" searches for "dogs" ("show me", "find", or a word for
+  pictures followed by "of", "from", "on"...; "photo booth" stays). The rules' patterns are
+  compiled once (the companion's `RULES`); a reading is made per query on the phone's today and
+  locale, today moving on at midnight in an open search. A date alone lists every file taken
+  then, newest first (`SearchHit` without a result), which works before anything is described.
+  The filter's label ("summer 2026: Jun 1, 2026 – Aug 31, 2026") shows as a chip above the
+  results; its × searches the query as words instead (`GalleryViewModel.dismissDate`, until the
+  query changes).
 
 ### The GPU (Snapdragon)
 
 The text detector (CRAFT) runs on a Snapdragon's Adreno GPU when there is one and "Read text on
-the GPU" is on (`Settings.gpuText`, default on; the toggle is greyed out elsewhere).
+the GPU" is on (`Settings.gpuText`, default on). Looking for it loads Qualcomm's libraries, so
+it is looked for only when wanted: by describing, or by the Settings screen, which shows where it
+stands (`AiEngine.Gpu`: none here, found, or failed its check this run) and greys the toggle
+out where there is none.
 
 - **How**: Qualcomm's QNN execution provider, a plugin to ONNX Runtime
   (`com.qualcomm.qti:onnxruntime-android-qnn` + `qnn-runtime`), registered once by
@@ -306,15 +314,19 @@ the GPU" is on (`Settings.gpuText`, default on; the toggle is greyed out elsewhe
   Float32 on the same GPU is no use: 2.2× the CPU while the phone is cool, 1.15× once it warms
   (its clock is cut hard at thermal status 1), at 3.5 KB a pixel: 5.5 GB for 1.6 MP, which got
   the process killed. Float16's scores differ from float32's by about one part in a thousand.
-- **Fixed shapes**: QNN needs every dimension fixed, so each input shape gets its own session
-  (`setSymbolicDimensionValue`), compiled in about 3 s. `EasyOcr` sends an input to the GPU from
-  0.6 MP (where compiling pays for itself on one image), or from 0.2 MP once its shape has been
-  seen before (a camera's photos, a phone's screenshots share one). It keeps the sessions of
-  recent shapes open while their pixels add up to `acceleratedCachePixels`, closing the least
-  recently used before compiling another, since each holds its activations while open; tiles
-  are cut to `acceleratedMaxTilePixels`. Both are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
+- **Fixed shapes**: QNN needs every dimension fixed, so each tile shape gets its own session
+  (`setSymbolicDimensionValue`), compiled in about 3 s. A canvas is cut for the GPU to
+  `acceleratedMaxTilePixels`, every tile one size (`EasyOcr.windows`: edge tiles reach further
+  in, which only adds context), so one session serves a whole canvas; cut the CPU's way, edge and
+  middle tiles differ and would each need one. The GPU takes the canvas when that tile is 0.6 MP
+  or more (where compiling pays for itself on one image), or 0.2 MP once the shape has been
+  seen before (a camera's photos, a phone's screenshots share one); otherwise the CPU runs it, cut
+  to its own budget. Sessions of recent shapes stay open while their pixels add up to
+  `acceleratedCachePixels`, the least recently used closed before another compiles, since each
+  holds its activations while open. Both budgets are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
   (a screenshot whole, as on the CPU), 1.6 MP on 8 GB ones, 0.8 MP below. The CPU then sees only
-  small inputs, so its session stays small too.
+  small canvases, so its session stays small too. `CraftTilingTest.acceleratorTilesComputeTheSameScores`:
+  the GPU's way, run with the float32 graph, gives the whole canvas's score maps exactly.
 - **Checked, and dropped on failure**: once a process, `acceleratorAgrees` runs a made-up input
   on both, within 0.01 (scores run from 0 to 1, EasyOCR's thresholds are 0.4 and 0.7; float16
   moves them by about 0.001, a driver computing a graph wrongly, as Adreno does BLIP's encoder,

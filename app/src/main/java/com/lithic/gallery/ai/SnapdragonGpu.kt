@@ -34,6 +34,9 @@ object SnapdragonGpu {
             } catch (e: Exception) {
                 Log.i(TAG, "no QNN execution provider here", e)
                 null
+            } catch (e: LinkageError) { // a native library missing or not matching (UnsatisfiedLinkError)
+                Log.i(TAG, "no QNN execution provider here", e)
+                null
             }
             Log.i(TAG, "Snapdragon GPU: ${if (device != null) "found" else "none"}")
         }

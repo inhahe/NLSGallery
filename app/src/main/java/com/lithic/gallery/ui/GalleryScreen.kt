@@ -179,7 +179,7 @@ fun GalleryScreen(
         } else {
             val list = remember(hits) { hits.map { it.item } }
             if (list.isEmpty()) {
-                NoResults(query, searchDate, ai, Modifier.padding(top = headerDp))
+                NoResults(query, searchDate, category.takeIf { settings.searchCurrentTabOnly }, ai, Modifier.padding(top = headerDp))
             } else {
                 val semantic = remember(hits) { hits.filter { it.result?.semanticOnly == true }.map { it.item.id }.toSet() }
                 ThumbnailGrid(
@@ -221,7 +221,7 @@ fun GalleryScreen(
             }
             CategoryTabs(tabs, category, onSelect = vm::selectCategory)
             if (hits != null) {
-                searchDate?.let { date -> DateChip(date.filter.label) { vm.dateDismissed.value = query } }
+                searchDate?.let { date -> DateChip(date.filter.label, onDismiss = vm::dismissDate) }
                 SearchChips(
                     words = searchDate?.text?.isEmpty() != true,
                     fields = settings.searchFields,
@@ -438,12 +438,13 @@ private fun EmptyTab(category: Category, libraryEmpty: Boolean, modifier: Modifi
 }
 
 @Composable
-private fun NoResults(query: String, date: DatePhrases.DateQuery?, ai: AiStatus, modifier: Modifier) {
+private fun NoResults(query: String, date: DatePhrases.DateQuery?, tabOnly: Category?, ai: AiStatus, modifier: Modifier) {
     Column(modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text(
             when {
                 date == null -> "Nothing matches “$query”."
                 // The chip above says when.
+                date.text.isEmpty() && tabOnly != null -> "Nothing in ${tabOnly.label()} was taken then."
                 date.text.isEmpty() -> "No photos or videos were taken then."
                 else -> "Nothing taken then matches “${date.text}”."
             },

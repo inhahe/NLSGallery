@@ -123,6 +123,7 @@ class DatePhrasesTest {
         assertSpan("last halloween", day(2026, 10, 31))
         assertSpan("valentine's day 2024", day(2024, 2, 14))
         assertEveryYear("valentines", listOf(d(2023, 2, 14)), listOf(d(2023, 2, 15)))
+        assertEveryYear("valentine", listOf(d(2023, 2, 14)), listOf(d(2023, 2, 15)))
         assertSpan("fourth of july 2023", day(2023, 7, 4))
         assertSpan("july 4th", day(2026, 7, 4))
         assertSpan("the 4th of july", day(2026, 7, 4))
@@ -235,8 +236,12 @@ class DatePhrasesTest {
         for (q in listOf("between 2019 and 2021", "2019-2021", "2019 to 2021", "from 2019 to 2021", "2019 – 2021", "2021-2019")) {
             assertSpan(q, days(d(2019, 1, 1), d(2021, 12, 31)))
         }
-        assertSpan("since 2020", days(d(2020, 1, 1), d(2026, 11, 7)))
-        assertSpan("after 2020", days(d(2021, 1, 1), d(2026, 11, 7)))
+        // Open-ended, so a year still to come is a date too, not the bare year.
+        assertSpan("since 2020", Span(d(2020, 1, 1), d(9999, 1, 1)))
+        assertSpan("after 2020", Span(d(2021, 1, 1), d(9999, 1, 1)))
+        assertSpan("after 2026", Span(d(2027, 1, 1), d(9999, 1, 1)))
+        assertSpan("beach after 2026", Span(d(2027, 1, 1), d(9999, 1, 1)), "beach")
+        assertSpan("since 2030", Span(d(2030, 1, 1), d(9999, 1, 1)))
         assertSpan("before 2010", days(d(1800, 1, 1), d(2009, 12, 31)))
     }
 
@@ -257,6 +262,15 @@ class DatePhrasesTest {
         assertSpan("  sunset   last   summer ", days(d(2026, 6, 1), d(2026, 8, 31)), "sunset")
         assertSpan("show me photos from last summer", days(d(2026, 6, 1), d(2026, 8, 31)))
         assertSpan("dogs on the beach last summer", days(d(2026, 6, 1), d(2026, 8, 31)), "dogs on the beach")
+        // A request the query opens with is not searched for; a word for pictures alone is.
+        val summer = days(d(2026, 6, 1), d(2026, 8, 31))
+        assertSpan("show me photos of dogs from last summer", summer, "dogs")
+        assertSpan("last summer photos of dogs", summer, "dogs")
+        assertSpan("photos on the beach last summer", summer, "beach")
+        assertSpan("find cats last summer", summer, "cats")
+        assertSpan("my pictures from last summer", summer)
+        assertSpan("photo booth last summer", summer, "photo booth")
+        assertSpan("get together last summer", summer, "get together")
         for (q in listOf("dog on a beach", "2 dogs", "iphone 12", "top 10", "", "receipt")) assertNoDate(q)
     }
 
