@@ -1,6 +1,7 @@
 package com.lithic.gallery.ui
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -66,8 +67,11 @@ data class AiStatus(
     val running: Boolean = false,
     val done: Int = 0,
     val total: Int = 0,
-    /** The pass a run is in: "captions" (all files first), then "text". */
+    /** The pass a run is in: "captions" (all files first), then "text"; "embeddings" before and after. */
     val phase: String = "captions",
+    /** Files done, and in all, in that pass (passes go at very different speeds). */
+    val phaseDone: Int = 0,
+    val phaseTotal: Int = 0,
     /** A model download is going: bytes done of total. */
     val downloading: Boolean = false,
     val downloadDone: Long = 0,
@@ -231,6 +235,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             done = run?.progress?.getInt(Work.KEY_DONE, 0) ?: 0,
             total = run?.progress?.getInt(Work.KEY_TOTAL, 0) ?: 0,
             phase = run?.progress?.getString(Work.KEY_PHASE) ?: "captions",
+            phaseDone = run?.progress?.getInt(Work.KEY_PHASE_DONE, 0) ?: 0,
+            phaseTotal = run?.progress?.getInt(Work.KEY_PHASE_TOTAL, 0) ?: 0,
             downloading = dl != null,
             downloadDone = dl?.progress?.getLong(Work.KEY_DONE, 0) ?: 0,
             downloadTotal = dl?.progress?.getLong(Work.KEY_TOTAL, 0) ?: 0,
@@ -239,6 +245,40 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AiStatus())
 
     val modelStates: StateFlow<Map<String, ModelState>> = app.models.state
+
+    private val _passSecondsLeft = MutableStateFlow<Long?>(null)
+
+    /**
+     * Seconds left in the describing pass under way, from how fast its files went in the last
+     * few minutes; null while none is running, or until a few are done.
+     */
+    val passSecondsLeft: StateFlow<Long?> = _passSecondsLeft
+
+    init {
+        viewModelScope.launch {
+            // (time, files done) in the pass under way, the last few minutes of them.
+            val samples = ArrayDeque<Pair<Long, Int>>()
+            var pass: String? = null
+            aiStatus.collect { a ->
+                val restarted = samples.isNotEmpty() && a.phaseDone < samples.last().second
+                if (!a.running || a.phase != pass || restarted) {
+                    samples.clear()
+                    pass = a.phase.takeIf { a.running }
+                }
+                if (!a.running || a.phaseTotal == 0) {
+                    _passSecondsLeft.value = null
+                    return@collect
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (samples.isEmpty() || samples.last().second != a.phaseDone) samples.addLast(now to a.phaseDone)
+                while (samples.size > 2 && now - samples.first().first > ETA_WINDOW_MS) samples.removeFirst()
+                val (since, doneThen) = samples.first()
+                val doneSince = a.phaseDone - doneThen
+                _passSecondsLeft.value = if (doneSince < 3) null
+                else (a.phaseTotal - a.phaseDone).toLong() * (now - since) / doneSince / 1000
+            }
+        }
+    }
 
     /** Where the GPU stands for reading text (Settings shows it). */
     val gpu: StateFlow<AiEngine.Gpu> = app.ai.gpu
@@ -380,4 +420,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun storageUsedByModels(): Long = app.models.bytesOnDisk()
 
+    private companion object {
+        /** How far back the pass's speed is taken from: describing slows as the phone warms. */
+        const val ETA_WINDOW_MS = 5 * 60_000L
+    }
 }

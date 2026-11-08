@@ -41,6 +41,9 @@ object Work {
     const val KEY_TOTAL = "total"
     /** Which pass a describe run is in: "embeddings", "captions", "text", "embeddings". */
     const val KEY_PHASE = "phase"
+    /** Files done, and in all, in the pass under way (KEY_PHASE): passes go at very different speeds. */
+    const val KEY_PHASE_DONE = "phaseDone"
+    const val KEY_PHASE_TOTAL = "phaseTotal"
     const val KEY_KEYS = "keys"
     const val KEY_ERROR = "error"
 
@@ -205,16 +208,28 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             }
         }
         var done = 0
+        var phaseDone = 0
+        var phaseTotal = 0
         var lastShown = 0L
+        suspend fun report(phase: String) = setProgress(workDataOf(Work.KEY_DONE to done, Work.KEY_TOTAL to total,
+            Work.KEY_PHASE to phase, Work.KEY_PHASE_DONE to phaseDone, Work.KEY_PHASE_TOTAL to phaseTotal))
         suspend fun progress(phase: String) {
             done++
+            phaseDone++
             // At most once a second: an embedding takes milliseconds, and Android drops
             // notifications posted faster.
             val now = SystemClock.elapsedRealtime()
             if (now - lastShown < 1000 && done < total) return
             lastShown = now
-            setProgress(workDataOf(Work.KEY_DONE to done, Work.KEY_TOTAL to total, Work.KEY_PHASE to phase))
+            report(phase)
             if (foreground) setForeground(Work.describeNotification(applicationContext, id, done, total, phase))
+        }
+        /** A pass of [size] files begins: shown at once (a text pass's first file can take a minute). */
+        suspend fun begin(part: AiEngine.Part, size: Int) {
+            if (size == 0) return
+            phaseDone = 0
+            phaseTotal = size
+            report(part.phase)
         }
         // A file counts once a run, whichever passes the models failed on it in (a blame the
         // database finds stale does not use that up).
@@ -243,8 +258,10 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         var unfinished = false
         try {
             val stop = { isStopped }
+            begin(AiEngine.Part.EMBEDDINGS, embedFirst.size)
             unfinished = embedding.run(embedFirst, stop) != DescribePass.End.Done
             for ((part, items) in listOf(AiEngine.Part.CAPTIONS to captionPass, AiEngine.Part.TEXT to textPass)) {
+                begin(part, items.size)
                 when (describing(part).run(items, stop)) {
                     DescribePass.End.ModelsFailing -> {
                         Log.w(TAG, "the ${part.phase} models fail even on what they handled before; describing again later")
@@ -260,6 +277,7 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 val tried = embedFirst.mapTo(HashSet()) { it.hash }
                 val embedAfter = unembedded().filter { it.hash !in tried || it.describedAt >= started }
                 total += embedAfter.size
+                begin(AiEngine.Part.EMBEDDINGS, embedAfter.size)
                 if (embedding.run(embedAfter, stop) != DescribePass.End.Done) unfinished = true
             }
         } finally {

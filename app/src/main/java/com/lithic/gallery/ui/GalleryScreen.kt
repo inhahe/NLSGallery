@@ -136,6 +136,7 @@ fun GalleryScreen(
     val reading by vm.reading.collectAsState()
     val scope by vm.searchScope.collectAsState()
     val ai by vm.aiStatus.collectAsState()
+    val secondsLeft by vm.passSecondsLeft.collectAsState()
     val all by vm.allMedia.collectAsState()
     val aspectFixes by vm.aspectFixes.collectAsState()
     val density = LocalDensity.current
@@ -225,6 +226,7 @@ fun GalleryScreen(
                     progress = { if (ai.total > 0) ai.done / ai.total.toFloat() else 0f },
                     modifier = Modifier.fillMaxWidth().height(2.dp),
                 )
+                DescribeStatus(ai, secondsLeft, onClick = { aiDialog = true })
             }
             CategoryTabs(tabs, category, onSelect = vm::selectCategory)
             if (hits != null) {
@@ -332,6 +334,34 @@ private fun TopRow(
             }
         }
     }
+}
+
+/** What describing is doing: the pass, how far through it, and about how long it has left. */
+@Composable
+private fun DescribeStatus(ai: AiStatus, secondsLeft: Long?, onClick: () -> Unit) {
+    val what = when (ai.phase) {
+        "text" -> "Reading text in pictures"
+        "embeddings" -> "Preparing search"
+        else -> "Describing pictures"
+    }
+    val count = if (ai.phaseTotal > 0) " · ${"%,d".format(ai.phaseDone)} of ${"%,d".format(ai.phaseTotal)}" else " · starting"
+    val left = secondsLeft?.let { " · ${aboutLeft(it)}" } ?: ""
+    Text(
+        what + count + left,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 4.dp),
+    )
+}
+
+/** [seconds] as "about 25 min left", "about 3 h left", "about 2 days left". */
+private fun aboutLeft(seconds: Long): String = when {
+    seconds < 90 -> "about a minute left"
+    seconds < 90 * 60 -> "about ${(seconds + 30) / 60} min left"
+    seconds < 48 * 3600 -> "about ${(seconds + 1800) / 3600} h left"
+    else -> "about ${(seconds + 43_200) / 86_400} days left"
 }
 
 /** The AI button: sparkles, with a count of files waiting to be described, or progress. */

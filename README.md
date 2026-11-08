@@ -79,7 +79,9 @@ From a computer, `push-models.bat` copies them over USB instead (after
   first.
 - **The AI button**: shows how many are waiting; tap it to describe them now, or to stop.
 
-Each one is searchable as soon as it is done. A notification shows progress and has a Stop
+Each one is searchable as soon as it is done. While it works, a line under the tabs says which
+round it is in, how far through, and about how long is left ("Describing pictures · 1,234 of
+5,000 · about 2 h left"); tap it for more. A notification shows the same and has a Stop
 button. **Only while charging** makes the automatic runs wait for the charger.
 
 Describing goes in two rounds: first a caption for every picture (a couple of seconds each), so

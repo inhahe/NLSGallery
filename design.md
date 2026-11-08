@@ -378,7 +378,11 @@ each, so the whole library is soon searchable; then the text in pictures, 10-60 
 screenshots, downloads, messages, other, camera (`AiDao.withoutText`); files the models failed
 on last in each. Before and after them, the embeddings MiniLM failed to make are made
 (milliseconds each). It saves per file, so stopping loses at most one; progress is reported at
-most once a second. With more than
+most once a second: files done and in all, and the pass with its own count (`KEY_PHASE_DONE`,
+`KEY_PHASE_TOTAL`, reported as each pass begins, since a text pass's first file can take a
+minute). The gallery shows the pass, its count and the time it has left
+(`GalleryViewModel.passSecondsLeft`: the files left at the rate of the pass's last five
+minutes, since passes go at very different speeds and the phone slows as it warms). With more than
 three files (or user-started) it asks to run in the foreground with a progress notification and
 a Stop action (`mediaProcessing` on Android 15+, `dataSync` before); Android may refuse that from
 the background, and then it runs as a normal job (10-minute limit, resumed by the next trigger).
