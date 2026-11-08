@@ -188,7 +188,10 @@ in Telephoto's `ZoomableAsyncImage` (sub-sampled tiles for huge images), videos 
 ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 (`MediaStore.createTrashRequest`, API 30+; delete with the RecoverableSecurityException flow on
 29), details sheet (dates, file, AI description, OCR text, own caption, why a search hit matched),
-"Describe again".
+"Describe again". A long press on a thumbnail opens `MediaSheet`: the file's name and folder
+(selectable), open, share, delete, edit, open with, copy name, and the same details. The viewer
+and the sheet share `MediaActions` (the intents; the trash flow, after which the library is
+synced) and `MediaDetails`.
 
 ### AI in the app
 

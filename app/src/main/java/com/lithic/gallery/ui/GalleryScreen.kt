@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.Category
+import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.LayoutMode
 import kotlin.math.roundToInt
 
@@ -158,6 +159,9 @@ fun GalleryScreen(
     LaunchedEffect(category) { gridState.scrollToItem(0); headerOffset = 0f }
 
     var aiDialog by remember { mutableStateOf(false) }
+    // The thumbnail long-pressed: its list and its index in it.
+    var pressed by remember { mutableStateOf<Pair<List<MediaEntity>, Int>?>(null) }
+    val actions = rememberMediaActions(vm)
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).nestedScroll(connection)) {
         val padding = PaddingValues(top = headerDp, bottom = bottomPad + 8.dp)
@@ -174,7 +178,8 @@ fun GalleryScreen(
             if (items.isEmpty()) {
                 EmptyTab(category, all.isEmpty(), Modifier.padding(top = headerDp))
             } else {
-                ThumbnailGrid(items, settings, padding, onOpen = { list, i -> vm.openViewer(list); onOpen(i) }, onZoom = zoom,
+                ThumbnailGrid(items, settings, padding, onOpen = { list, i -> vm.openViewer(list); onOpen(i) },
+                    onLongPress = { list, i -> pressed = list to i }, onZoom = zoom,
                     state = gridState, aspectFixes = aspectFixes, onAspect = vm::recordAspect)
             }
         } else {
@@ -189,6 +194,7 @@ fun GalleryScreen(
                         vm.openViewer(shown, hits.mapNotNull { h -> h.result?.let { h.item.id to it } }.toMap())
                         onOpenSearchHit(i)
                     },
+                    onLongPress = { list, i -> pressed = list to i },
                     onZoom = zoom, state = searchState,
                     badge = { it.id in semantic },
                     aspectFixes = aspectFixes, onAspect = vm::recordAspect,
@@ -241,6 +247,21 @@ fun GalleryScreen(
                 SetupCard(onModels)
             }
         }
+    }
+
+    pressed?.let { (list, i) ->
+        val item = list[i]
+        val hit = results?.firstOrNull { it.item.id == item.id }?.result
+        MediaSheet(item, hit, vm, actions, onDismiss = { pressed = null }, onOpen = {
+            val hits = results
+            if (hits != null) {
+                vm.openViewer(list, hits.mapNotNull { h -> h.result?.let { h.item.id to it } }.toMap())
+                onOpenSearchHit(i)
+            } else {
+                vm.openViewer(list)
+                onOpen(i)
+            }
+        })
     }
 
     if (aiDialog) AiDialog(ai, onDismiss = { aiDialog = false }, onDescribe = { vm.describeNow(); aiDialog = false },

@@ -31,6 +31,10 @@ Newest first, by the date each was taken.
 Pinch to make thumbnails bigger or smaller. Portrait and landscape pictures and videos keep
 their orientation. Drag the bar on the right edge to move through years quickly.
 
+**Long-press a thumbnail** for its file name and folder, and to open, share, delete (to the
+trash, where Android keeps it 30 days), edit or open it in another app, or copy its name; below
+are its date, size and what the AI made of it.
+
 Tap a thumbnail to view it full screen: swipe between pictures, pinch or double-tap to zoom,
 tap a video to play it. The top bar has details (date, file, size, the AI description and the
 text found in the picture), share, move to trash, and Edit / Open with another app.

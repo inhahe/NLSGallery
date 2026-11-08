@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -47,7 +48,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +77,7 @@ import kotlin.math.roundToInt
  * never cropped. Pinching changes the row height or the number of columns.
  *
  * @param onOpen the item tapped: the list on screen and its index in it.
+ * @param onLongPress the item long-pressed, the same way.
  * @param badge an optional marker drawn on an item (search results mark "found by meaning").
  * @param aspectFixes displayed aspect ratios that override MediaStore's, by id: (dateModified, aspect).
  * @param onAspect a thumbnail decoded at this aspect ratio (to learn [aspectFixes]).
@@ -84,6 +88,7 @@ fun ThumbnailGrid(
     settings: Settings,
     contentPadding: PaddingValues,
     onOpen: (List<MediaEntity>, Int) -> Unit,
+    onLongPress: (List<MediaEntity>, Int) -> Unit,
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier,
     state: LazyListState = rememberLazyListState(),
@@ -141,7 +146,7 @@ fun ThumbnailGrid(
                 },
         ) {
             items(rows, key = { r -> shown[r.start].id }) { row ->
-                ThumbnailRow(shown, row, spacingPx, fit, onOpen, badge, onAspect)
+                ThumbnailRow(shown, row, spacingPx, fit, onOpen, onLongPress, badge, onAspect)
             }
         }
         FastScroller(state, rows, shown, contentPadding)
@@ -158,10 +163,12 @@ private fun ThumbnailRow(
     spacingPx: Int,
     fit: Boolean,
     onOpen: (List<MediaEntity>, Int) -> Unit,
+    onLongPress: (List<MediaEntity>, Int) -> Unit,
     badge: ((MediaEntity) -> Boolean)?,
     onAspect: (MediaEntity, Float) -> Unit,
 ) {
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
     Box(
         Modifier
             .fillMaxWidth()
@@ -176,7 +183,13 @@ private fun ThumbnailRow(
                     .offset { IntOffset(row.x[k], 0) }
                     .size(with(density) { w.toDp() }, with(density) { row.height.toDp() })
                     .background(if (fit) Color(0xFF151515) else Color.Transparent)
-                    .clickable { onOpen(items, index) },
+                    .combinedClickable(
+                        onClick = { onOpen(items, index) },
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongPress(items, index)
+                        },
+                    ),
             ) {
                 AsyncImage(
                     model = MediaThumb.forCell(item.uri, maxOf(w, row.height), item.dateModified),
