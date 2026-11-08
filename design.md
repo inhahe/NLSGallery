@@ -187,7 +187,9 @@ button, tabs) slides away on scroll down. A fast scroller shows the month.
 `AppRoot` (`MainActivity`) shows the gallery, and over it the viewer, settings or models
 screen. The gallery stays composed underneath (undrawn, out of the semantics tree, touches
 blocked by the covering screen), so closing one returns to the same scroll position, tab and
-search results.
+search results. Settings ends with About: the version, and *Credits and licences*, the notices
+of the data the app ships (`assets/NOTICE.txt`: GeoNames' CC BY 4.0, hijridate's MIT for the
+Umm al-Qura table).
 
 ### Viewer
 
@@ -300,15 +302,24 @@ synced) and `MediaDetails`.
   dynamical time to the clock's by ΔT), not dates that stand for them, since a new moon falls
   between such a date and the true moment once every decade or two and moves a festival a
   month. The Lunar New Year and the Mid-Autumn Festival (the 15th day of the 8th month) come from
-  the Chinese calendar's own rules (`ChineseCalendar`: months begin on the day of a new moon in
-  China, UTC+8 from 1929 and Beijing's mean time before; the month of the winter solstice is the
-  11th; a year of 13 months leaps its first month without a major solar term, so 2034's comes
-  after a leap 11th month): every year 1900-2099 as the Hong Kong Observatory's tables have it but
-  1978's Mid-Autumn Festival, whose month's new moon came 9 minutes after midnight and was kept a
-  day earlier (its span still holds that day). Diwali is the new moon ending Ashvin, the lunar
-  month in which the sun enters sidereal Libra, Holi the day after the full moon of Phalguna, in
-  which it enters sidereal Pisces: the true ingress, the tropical longitude less the Lahiri
-  ayanamsa (2039's and 2058's Diwali, 1983's and 2002's Holi, against published dates).
+  the Chinese calendar's own rules (`LunisolarCalendar`: months begin on the day of a new moon;
+  the month of the winter solstice is the 11th; a year of 13 months leaps its first month without
+  a major solar term, so 2034's comes after a leap 11th month; months 1 to 10 of a year, worked
+  out once each), in China's time (`ChineseCalendar`: UTC+8 from 1929, Beijing's mean time
+  before): every year 1900-2099 as the Hong Kong Observatory's tables have it but 1978's
+  Mid-Autumn Festival, whose month's new moon came 9 minutes after midnight and was kept a day
+  earlier (its span still holds that day). Tết is Vietnam's New Year, the same rules in its time
+  (`VietnameseCalendar`: UTC+7 from 1968), a day or (1985) a month from China's. Lakshmi Puja,
+  Diwali's night, is on the new moon's tithi ending Ashvin, the lunar month in which the sun
+  enters sidereal Libra, and Holika Dahan (Holi the day after) on the full moon's in Phalguna,
+  in which it enters sidereal Pisces: the true ingress, the sun's longitude from the mean
+  equinox less the Lahiri ayanamsa (measured from it too). Of the evenings a tithi spans, Lakshmi
+  Puja is the later when the new moon outlasts that sunset in New Delhi by a ghati (24 minutes);
+  Holika Dahan is after Bhadra, the full moon tithi's first half (taken as ending 12 hours before
+  the full moon): that night if it ends by about 3 a.m., else the next evening. Against Drik
+  Panchang: Lakshmi Puja 2024-2036 and 2039, Holika Dahan 2019-2026, 1983 and 2002 exactly; 2037's
+  new moon came a minute after sunset, and Drik keeps the later evening by rules about the
+  tithi's start this does not reckon (the span holds both).
   Islamic months are Saudi Arabia's Umm al-Qura calendar, an official table and not a rule a
   computation reproduces: its month lengths from 1 Muharram 1365 (5 December 1945) to 1500
   (2077) are 1632 bits in `UMM_AL_QURA` (`tools/make_umm_al_qura.py`, from hijridate), and

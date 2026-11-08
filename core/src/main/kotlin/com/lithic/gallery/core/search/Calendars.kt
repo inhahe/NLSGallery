@@ -2,7 +2,9 @@ package com.lithic.gallery.core.search
 
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneOffset
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.floor
 import kotlin.math.roundToLong
 import kotlin.math.sin
@@ -10,8 +12,9 @@ import kotlin.math.sin
 /**
  * Astronomical time: Julian Ephemeris Days (dynamical time, which the sun's and moon's motions
  * are reckoned in) to the clock's (UT), less ΔT, the Earth's lag (Espenak and Meeus' fits to
- * the record: about 24 s in 1925, 64 s in 2000, 70 s now). A solar term or new moon within a
- * minute of midnight moves its day by it.
+ * the record: about 24 s in 1925, 64 s in 2000; their fit gives 75 s for 2026, a few seconds
+ * over what was observed). A solar term or new moon within a minute of midnight moves its day
+ * by it.
  */
 internal object Time {
     private const val JD_UNIX_EPOCH = 2440587.5
@@ -52,20 +55,24 @@ internal object Time {
  * longitude (chapter 27's iteration).
  */
 internal object Sun {
-    /** The sun's apparent geocentric longitude at [jde], in degrees from 0 to 360. */
-    fun longitude(jde: Double): Double {
+    /**
+     * The sun's apparent geocentric longitude at [jde], in degrees from 0 to 360: from the true
+     * equinox of date with [nutation] (the Chinese calendar's solar terms), from the mean
+     * equinox without (sidereal positions, whose ayanamsa is measured from it).
+     */
+    fun longitude(jde: Double, nutation: Boolean = true): Double {
         val t = (jde - 2451545.0) / 36525
         val l0 = 280.46646 + 36000.76983 * t + 0.0003032 * t * t
         val m = Math.toRadians(357.52911 + 35999.05029 * t - 0.0001537 * t * t)
         val c = (1.914602 - 0.004817 * t - 0.000014 * t * t) * sin(m) + (0.019993 - 0.000101 * t) * sin(2 * m) + 0.000289 * sin(3 * m)
         val omega = Math.toRadians(125.04 - 1934.136 * t)
-        return mod360(l0 + c - 0.00569 - 0.00478 * sin(omega))
+        return mod360(l0 + c - 0.00569 - (if (nutation) 0.00478 * sin(omega) else 0.0))
     }
 
-    /** The first moment (JDE) from [after] at which the sun's longitude is [degrees]. */
-    fun reaches(degrees: Double, after: Double): Double {
-        var jde = after + mod360(degrees - longitude(after)) / 360.0 * 365.2422
-        repeat(6) { jde += 58.13 * sin(Math.toRadians(degrees - longitude(jde))) }
+    /** The first moment (JDE) from [after] at which the sun's longitude ([longitude], with [nutation] or not) is [degrees]. */
+    fun reaches(degrees: Double, after: Double, nutation: Boolean = true): Double {
+        var jde = after + mod360(degrees - longitude(after, nutation)) / 360.0 * 365.2422
+        repeat(6) { jde += 58.13 * sin(Math.toRadians(degrees - longitude(jde, nutation))) }
         return jde
     }
 
@@ -80,7 +87,6 @@ internal object Sun {
 internal object Moon {
     private const val SYNODIC_MONTH = 29.530588861
     private const val JDE_FIRST_NEW_MOON = 2451550.09766 // 6 January 2000, 18:14
-    private const val JD_UNIX_EPOCH = 2440587.5
 
     /** The moment of lunation [k]: whole, a new moon (0 that of 6 January 2000); k + 0.5, the full moon after it. */
     fun phase(k: Double): Instant {
@@ -134,8 +140,7 @@ internal object Moon {
     }
 
     /** The lunation number of [instant], as a fraction (the new moon of 6 January 2000 is 0). */
-    fun lunation(instant: Instant): Double =
-        (instant.toEpochMilli() / 86_400_000.0 + JD_UNIX_EPOCH - JDE_FIRST_NEW_MOON) / SYNODIC_MONTH
+    fun lunation(instant: Instant): Double = (Time.jde(instant) - JDE_FIRST_NEW_MOON) / SYNODIC_MONTH
 
     /** The last new moon at or before [instant], with its lunation number. */
     fun newMoonBefore(instant: Instant): Pair<Long, Instant> {
@@ -156,40 +161,53 @@ internal object LunarHolidays {
     private val INDIA = ZoneOffset.ofHoursMinutes(5, 30)
     private val MECCA = ZoneOffset.ofHours(3)
 
-    private fun dateIn(instant: Instant, zone: ZoneOffset): LocalDate = instant.atOffset(zone).toLocalDate()
-
     /**
      * When the sun enters the sidereal sign beginning at [degrees] (180 Libra, 330 Pisces) on or
-     * after [from]: the tropical longitude less the Lahiri ayanamsa, India's official one (23.857°
-     * in 2000, growing 50.3" a year with the precession of the equinoxes).
+     * after [from]: its longitude from the mean equinox less the Lahiri ayanamsa, India's
+     * official one, which is measured from the mean equinox too (23.857° in 2000, growing 50.3" a
+     * year with the precession of the equinoxes).
      */
     private fun siderealIngress(degrees: Double, from: LocalDate): Instant {
         val start = Time.jde(from.atStartOfDay().toInstant(INDIA))
         // The ayanamsa moves a second of arc a week: taken once near the ingress, it is exact enough.
         val ayanamsa = 23.857 + 1.3972 * ((start - 2451545.0) / 36525)
-        return Time.instant(Sun.reaches((degrees + ayanamsa) % 360.0, start))
+        return Time.instant(Sun.reaches((degrees + ayanamsa) % 360.0, start, nutation = false))
     }
 
+    /** Sunset in New Delhi, where panchangs reckon festivals, around Diwali. */
+    private val DIWALI_SUNSET = LocalTime.of(17, 40)
+
     /**
-     * Diwali in [year]: the new moon ending Ashvin, the lunar month in which the sun enters
-     * sidereal Libra (17 or 18 October). Lakshmi Puja is that night or the one before.
+     * Lakshmi Puja, Diwali's main night, in [year]: the evening of the new moon's tithi (lunar
+     * day) ending Ashvin, the lunar month in which the sun enters sidereal Libra (17 or 18
+     * October). Of the two evenings the tithi spans, the later when it outlasts that sunset by a
+     * ghati (24 minutes), as panchangs choose: a new moon after midnight, or soon after sunset,
+     * is the evening before's.
      */
-    fun diwali(year: Int): LocalDate {
+    fun lakshmiPuja(year: Int): LocalDate {
         val (k, _) = Moon.newMoonBefore(siderealIngress(180.0, LocalDate.of(year, 9, 1)))
-        return dateIn(Moon.phase((k + 1).toDouble()), INDIA)
+        val end = Moon.phase((k + 1).toDouble()).atOffset(INDIA)
+        return if (end.toLocalTime().isAfter(DIWALI_SUNSET.plusMinutes(24))) end.toLocalDate() else end.toLocalDate().minusDays(1)
     }
 
     /**
-     * The full moon of Holi in [year]: that of Phalguna, the lunar month in which the sun enters
-     * sidereal Pisces (14 or 15 March). Holika Dahan is that night, Holi the next day.
+     * Holika Dahan in [year], on the full moon's tithi in Phalguna, the lunar month in which the
+     * sun enters sidereal Pisces (14 or 15 March); Holi is the next day. It is kept after Bhadra,
+     * the tithi's first half (taken as ending 12 hours before the full moon, a tithi lasting
+     * about a day): the night Bhadra ends in when it ends by about 3 a.m. (2022's, at 1:09),
+     * else the next evening (2023's, Bhadra lasting until dawn), as panchangs keep it.
      */
-    fun holiFullMoon(year: Int): LocalDate {
+    fun holikaDahan(year: Int): LocalDate {
         val (k, _) = Moon.newMoonBefore(siderealIngress(330.0, LocalDate.of(year, 2, 1)))
-        return dateIn(Moon.phase(k + 0.5), INDIA)
+        val bhadraEnds = Moon.phase(k + 0.5).atOffset(INDIA).minusHours(12)
+        return bhadraEnds.minusHours(3).toLocalDate()
     }
 
     /** The Lunar (Chinese) New Year in [year]: the first day of its first month ([ChineseCalendar]). */
     fun lunarNewYear(year: Int): LocalDate = ChineseCalendar.monthStart(year, 1)
+
+    /** Tết in [year]: the first day of the Vietnamese year ([VietnameseCalendar]), now and then a day or a month from China's. */
+    fun tet(year: Int): LocalDate = VietnameseCalendar.monthStart(year, 1)
 
     /** The Mid-Autumn Festival in [year]: the 15th day of the 8th month ([ChineseCalendar]). */
     fun midAutumn(year: Int): LocalDate = ChineseCalendar.monthStart(year, 8).plusDays(14)
@@ -221,28 +239,30 @@ internal object LunarHolidays {
     /** About when the sun sets in Mecca (18:30 local, within the hour all year). */
     private const val SUNSET_MINUTES = 18 * 60 + 30
 
-    /** The first month of [UMM_AL_QURA], in months since 1 Muharram 1 AH, and its first day. */
+    // From here to the end of UMM_AL_QURA, as tools/make_umm_al_qura.py prints it.
+    /** The first month of [UMM_AL_QURA] (months since 1 Muharram 1 AH), its first day, and how many it has. */
     private const val TABLE_FIRST_MONTH = (1365L - 1) * 12
-    private val TABLE_FIRST_DAY = LocalDate.of(1945, 12, 5)
+    private val TABLE_FIRST_DAY: LocalDate = LocalDate.of(1945, 12, 5)
+    private const val TABLE_MONTHS = 1632
 
     /**
-     * The Umm al-Qura calendar's month lengths, 1 Muharram 1365 to the end of 1500
-     * (tools/make_umm_al_qura.py, from hijridate's table): a month's bit, most significant first
-     * in each hex digit, is 1 for 30 days, 0 for 29.
+     * The Umm al-Qura calendar's month lengths, 1 Muharram 1365 to the end of 1500, from
+     * hijridate's table: a month's bit, most significant first in each hex digit, is 1 for 30
+     * days, 0 for 29.
      */
     private const val UMM_AL_QURA =
-            "aabaaaaaaaabab6aaaa5754b555ab3aa64ea95baaa555aaab4ab655aaaaab2ecab2ab6aaaabab4aab2aba2baa6b4aba5" +
-            "5aaab5556d2b54aea57526e936aaad555aa5b52ba95b49ba4db25d52daa5ad4aea56d4bd23d91da95b4ab5a56d2b693b" +
-            "49b6556a9754b6a56caad555b29b92ba95d4ada55aaab595749764baa5b52b6a56d2ae9572a75535a95d49ba4dd26d53" +
-            "5aaaad4b6a57527a95b4ab5536c9ae4b6a96b4ada55d25d92dc96d4ad6556d2b693749b64d72ab54b6a5752b6956b2ad" +
-            "94dc95d4aea56caad5556c97"
+        "aabaaaaaaaabab6aaaa5754b555ab3aa64ea95baaa555aaab4ab655aaaaab2ecab2ab6aaaabab4aab2aba2baa6b4aba5" +
+        "5aaab5556d2b54aea57526e936aaad555aa5b52ba95b49ba4db25d52daa5ad4aea56d4bd23d91da95b4ab5a56d2b693b" +
+        "49b6556a9754b6a56caad555b29b92ba95d4ada55aaab595749764baa5b52b6a56d2ae9572a75535a95d49ba4dd26d53" +
+        "5aaaad4b6a57527a95b4ab5536c9ae4b6a96b4ada55d25d92dc96d4ad6556d2b693749b64d72ab54b6a5752b6956b2ad" +
+        "94dc95d4aea56caad5556c97"
 
     /** Each table month's first day, by month since [TABLE_FIRST_MONTH]. */
     private val tableStarts: LongArray by lazy {
-        val months = (1500 - 1365 + 1) * 12
-        val starts = LongArray(months + 1)
+        check(UMM_AL_QURA.length == (TABLE_MONTHS + 3) / 4) { "UMM_AL_QURA has ${UMM_AL_QURA.length} digits for $TABLE_MONTHS months" }
+        val starts = LongArray(TABLE_MONTHS + 1)
         starts[0] = TABLE_FIRST_DAY.toEpochDay()
-        for (i in 0 until months) {
+        for (i in 0 until TABLE_MONTHS) {
             val bit = (Character.digit(UMM_AL_QURA[i / 4], 16) shr (3 - i % 4)) and 1
             starts[i + 1] = starts[i] + 29 + bit
         }
@@ -252,65 +272,80 @@ internal object LunarHolidays {
     /** The first day of Hijri month [index] (months since 1 Muharram 1 AH) by the table, or null outside it. */
     private fun tableMonthStart(index: Long): LocalDate? {
         val i = index - TABLE_FIRST_MONTH
-        return if (i < 0 || i >= tableStarts.size - 1) null else LocalDate.ofEpochDay(tableStarts[i.toInt()])
+        return if (i < 0 || i >= TABLE_MONTHS) null else LocalDate.ofEpochDay(tableStarts[i.toInt()])
     }
 }
 
 /**
- * The Chinese calendar's months (as China has reckoned them since 1645, and Calendrical
- * Calculations describes): each begins on the day, in China, of a new moon; the month holding
- * the winter solstice is the 11th; and in a year of 13 months between two 11th months, the first
- * month holding none of the twelve major solar terms (the sun at a multiple of 30°) is a leap
- * month, numbered as the one before it. China's day is UTC+8 from 1929, Beijing's mean solar
- * time before.
+ * The Chinese calendar's months, and the calendars reckoned as it is (as China has since 1645,
+ * and Calendrical Calculations describes): each month begins on the day of a new moon; the month
+ * holding the winter solstice is the 11th; and in a year of 13 months between two 11th months,
+ * the first month holding none of the twelve major solar terms (the sun at a multiple of 30°) is
+ * a leap month, numbered as the one before it. Days are those of the time [zoneOf] gives for each
+ * year: an hour's difference moves a new moon or a solar term across midnight now and then, and
+ * the months, even the leap month, with it (Vietnam's Tết was a month before China's New Year
+ * in 1985).
  */
-internal object ChineseCalendar {
-    private fun zone(day: LocalDate): ZoneOffset =
-        if (day.year >= 1929) ZoneOffset.ofHours(8) else ZoneOffset.ofHoursMinutesSeconds(7, 45, 40)
+internal open class LunisolarCalendar(private val zoneOf: (Int) -> ZoneOffset) {
+    /** Each year's months 1 to 10 (their first days), worked out once. */
+    private val years = ConcurrentHashMap<Int, List<LocalDate>>()
 
-    /** The day in China of [instant]. */
-    private fun dayOf(instant: Instant): LocalDate {
-        val utc = instant.atOffset(ZoneOffset.UTC).toLocalDate()
-        return instant.atOffset(zone(utc)).toLocalDate()
-    }
-
-    /** The day in China of the winter solstice of [year]. */
-    private fun solstice(year: Int): LocalDate =
-        dayOf(Time.instant(Sun.reaches(270.0, Time.jde(LocalDate.of(year, 12, 1).atStartOfDay().toInstant(ZoneOffset.UTC)))))
-
-    /** The lunation and the day of the last new moon on or before [day] (by China's day). */
-    private fun newMoonOnOrBefore(day: LocalDate): Pair<Long, LocalDate> {
-        var (k, _) = Moon.newMoonBefore(day.plusDays(2).atStartOfDay().toInstant(ZoneOffset.UTC))
-        while (dayOf(Moon.phase(k.toDouble())).isAfter(day)) k--
-        return k to dayOf(Moon.phase(k.toDouble()))
-    }
-
-    /** Whether the sun reaches a multiple of 30° on a day from [start] to [end] (excluded), in China. */
-    private fun holdsMajorTerm(start: LocalDate, end: LocalDate): Boolean {
-        val from = Time.jde(start.atStartOfDay().toInstant(zone(start)))
-        val next = (floor(Sun.longitude(from) / 30.0) + 1) * 30.0
-        return dayOf(Time.instant(Sun.reaches(next % 360.0, from))).isBefore(end)
-    }
-
-    /** The first day of month [number] (1-12, not a leap month) of Chinese year [year] (the one beginning in Gregorian [year]). */
+    /** The first day of month [number] (1-10, not a leap month) of the year beginning in Gregorian [year]. */
     fun monthStart(year: Int, number: Int): LocalDate {
-        val (k0, _) = newMoonOnOrBefore(solstice(year - 1))
-        val (k1, _) = newMoonOnOrBefore(solstice(year))
+        require(number in 1..10) { "month $number: a year's months 11 and 12 are reckoned with the next" }
+        return years.computeIfAbsent(year, ::months)[number - 1]
+    }
+
+    /**
+     * The first days of months 1 to 10 of [year]: the months from the 11th of the year before (the
+     * winter solstice's) to the next 11th, one of them leap when there are 13.
+     */
+    private fun months(year: Int): List<LocalDate> {
+        val zone = zoneOf(year)
+        fun dayOf(instant: Instant): LocalDate = instant.atOffset(zone).toLocalDate()
+        fun solstice(y: Int): LocalDate =
+            dayOf(Time.instant(Sun.reaches(270.0, Time.jde(LocalDate.of(y, 12, 1).atStartOfDay().toInstant(ZoneOffset.UTC)))))
+        // The lunation of the last new moon on or before [day].
+        fun newMoonOnOrBefore(day: LocalDate): Long {
+            var (k, _) = Moon.newMoonBefore(day.plusDays(2).atStartOfDay().toInstant(ZoneOffset.UTC))
+            while (dayOf(Moon.phase(k.toDouble())).isAfter(day)) k--
+            return k
+        }
+        // Whether the sun reaches a multiple of 30° on a day from [start] to [end] (excluded).
+        fun holdsMajorTerm(start: LocalDate, end: LocalDate): Boolean {
+            val from = Time.jde(start.atStartOfDay().toInstant(zone))
+            val next = (floor(Sun.longitude(from) / 30.0) + 1) * 30.0
+            return dayOf(Time.instant(Sun.reaches(next % 360.0, from))).isBefore(end)
+        }
+
+        val k0 = newMoonOnOrBefore(solstice(year - 1))
+        val k1 = newMoonOnOrBefore(solstice(year))
         val starts = (k0..k1).map { dayOf(Moon.phase(it.toDouble())) }
         val leapYear = k1 - k0 == 13L
-        var month = 11
+        val out = ArrayList<LocalDate>()
         var leapSeen = false
+        // starts[0] is the 11th month, the last the next 11th; between, the 12th, then 1, 2, ...
         for (i in 1 until starts.size - 1) {
             if (leapYear && !leapSeen && !holdsMajorTerm(starts[i], starts[i + 1])) {
                 leapSeen = true
                 continue
             }
-            month = month % 12 + 1
-            if (month == number) return starts[i]
+            out.add(starts[i])
         }
-        error("no month $number in Chinese year $year")
+        check(out.size == 11) { "year $year: ${out.size} months between two 11th months" }
+        return out.drop(1)
     }
 }
+
+/** China's calendar: its day UTC+8 from 1929, Beijing's mean solar time before. */
+internal object ChineseCalendar : LunisolarCalendar({ year ->
+    if (year >= 1929) ZoneOffset.ofHours(8) else ZoneOffset.ofHoursMinutesSeconds(7, 45, 40)
+})
+
+/** Vietnam's calendar: reckoned for UTC+7 since 1968 (the North's; the South kept China's until 1975), China's before. */
+internal object VietnameseCalendar : LunisolarCalendar({ year ->
+    if (year >= 1968) ZoneOffset.ofHours(7) else if (year >= 1929) ZoneOffset.ofHours(8) else ZoneOffset.ofHoursMinutesSeconds(7, 45, 40)
+})
 
 /**
  * The Hebrew calendar's new years (Dershowitz and Reingold, Calendrical Calculations): Rosh

@@ -34,16 +34,7 @@ class CalendarsTest {
     }
 
     @Test
-    fun moonHolidays() {
-        for ((year, day) in listOf(2017 to "2017-01-28", 2018 to "2018-02-16", 2019 to "2019-02-05", 2020 to "2020-01-25",
-            2021 to "2021-02-12", 2022 to "2022-02-01", 2023 to "2023-01-22", 2024 to "2024-02-10", 2025 to "2025-01-29",
-            2026 to "2026-02-17")) {
-            assertWithMessage("Lunar New Year $year").that(LunarHolidays.lunarNewYear(year)).isEqualTo(d(day))
-        }
-        for ((year, day) in listOf(2021 to "2021-09-21", 2022 to "2022-09-10", 2023 to "2023-09-29", 2024 to "2024-09-17",
-            2025 to "2025-10-06", 2026 to "2026-09-25")) {
-            assertWithMessage("Mid-Autumn $year").that(LunarHolidays.midAutumn(year)).isEqualTo(d(day))
-        }
+    fun islamicHolidays() {
         // Ramadan's first day, Eid al-Fitr (1 Shawwal), and Eid al-Adha's month (1 Dhu al-Hijjah: Eid is the 10th).
         for ((year, day) in listOf(2022 to "2022-04-02", 2023 to "2023-03-23", 2024 to "2024-03-11", 2025 to "2025-03-01")) {
             assertWithMessage("Ramadan $year").that(LunarHolidays.hijriMonthStarts(year, 9)).containsExactly(d(day))
@@ -114,22 +105,52 @@ class CalendarsTest {
     }
 
     @Test
-    fun indianFestivalsByTheTrueIngress() {
+    fun indianFestivalsAsPublished() {
         // Years in which a new or full moon falls between 17 October (14 March) and the sun's true
-        // entry into sidereal Libra (Pisces): a fixed date's reckoning is a month early in them.
-        // Published: Lakshmi Puja 15 November 2039 and 2058 (the night before the new moon in
-        // India); Holika Dahan 28 March 2002 and 1983 (the full moon's evening).
-        assertThat(LunarHolidays.diwali(2039)).isEqualTo(d("2039-11-16"))
-        assertThat(LunarHolidays.diwali(2058)).isEqualTo(d("2058-11-16"))
-        assertThat(LunarHolidays.holiFullMoon(2002)).isEqualTo(d("2002-03-28"))
-        assertThat(LunarHolidays.holiFullMoon(1983)).isEqualTo(d("1983-03-29"))
-        // And as published for recent and coming years (Lakshmi Puja, New Delhi).
-        for ((year, puja) in listOf(2027 to "2027-10-29", 2028 to "2028-10-17", 2029 to "2029-11-05", 2030 to "2030-10-26",
-            2031 to "2031-11-14", 2032 to "2032-11-02", 2033 to "2033-10-22", 2034 to "2034-11-10", 2035 to "2035-10-30",
-            2036 to "2036-10-18", 2037 to "2037-11-07")) {
-            val newMoon = LunarHolidays.diwali(year)
-            assertWithMessage("Diwali $year").that(d(puja)).isIn(listOf(newMoon, newMoon.minusDays(1)))
+        // entry into sidereal Libra (Pisces), where a fixed date's reckoning is a month early:
+        // Lakshmi Puja 15 November 2039, Holika Dahan 28 March 2002 and 1983 (a full moon after
+        // midnight in India: the evening before).
+        assertThat(LunarHolidays.lakshmiPuja(2039)).isEqualTo(d("2039-11-15"))
+        assertThat(LunarHolidays.holikaDahan(2002)).isEqualTo(d("2002-03-28"))
+        assertThat(LunarHolidays.holikaDahan(1983)).isEqualTo(d("1983-03-28"))
+        // Lakshmi Puja in New Delhi as Drik Panchang publishes it, 2024's and 2025's too, whose
+        // new moons came 40 and 8 minutes after sunset (the later evening, then the earlier).
+        for ((year, puja) in listOf(2024 to "2024-11-01", 2025 to "2025-10-20", 2026 to "2026-11-08", 2027 to "2027-10-29",
+            2028 to "2028-10-17", 2029 to "2029-11-05", 2030 to "2030-10-26", 2031 to "2031-11-14", 2032 to "2032-11-02",
+            2033 to "2033-10-22", 2034 to "2034-11-10", 2035 to "2035-10-30", 2036 to "2036-10-18")) {
+            assertWithMessage("Lakshmi Puja $year").that(LunarHolidays.lakshmiPuja(year)).isEqualTo(d(puja))
         }
+        // 2037's new moon comes a minute after sunset: Drik Panchang keeps that evening, 7
+        // November, by rules about the tithi's start this does not reckon; the ghati's rule keeps
+        // the 6th. The festival's span holds both.
+        assertThat(LunarHolidays.lakshmiPuja(2037)).isEqualTo(d("2037-11-06"))
+        // Holika Dahan, the evening before Holi: 2022's on the night Bhadra ended in, 2023's and
+        // 2026's the evening after (Bhadra lasting until dawn, the full moon before sunset).
+        for ((year, holi) in listOf(2019 to "2019-03-21", 2020 to "2020-03-10", 2021 to "2021-03-29", 2022 to "2022-03-18",
+            2023 to "2023-03-08", 2024 to "2024-03-25", 2025 to "2025-03-14", 2026 to "2026-03-04")) {
+            assertWithMessage("Holika Dahan $year").that(LunarHolidays.holikaDahan(year)).isEqualTo(d(holi).minusDays(1))
+        }
+    }
+
+    @Test
+    fun tetByVietnamsCalendar() {
+        // Vietnam's calendar is reckoned for UTC+7: in 1985 a new moon an hour from midnight put
+        // its leap month elsewhere and Tết a month before China's New Year; in 2007 and 2030 a day.
+        for ((year, tet, china) in listOf(Triple(1985, "1985-01-21", "1985-02-20"), Triple(2007, "2007-02-17", "2007-02-18"),
+            Triple(2030, "2030-02-02", "2030-02-03"), Triple(2026, "2026-02-17", "2026-02-17"))) {
+            assertWithMessage("Tết $year").that(LunarHolidays.tet(year)).isEqualTo(d(tet))
+            assertWithMessage("Lunar New Year $year").that(LunarHolidays.lunarNewYear(year)).isEqualTo(d(china))
+        }
+    }
+
+    @Test
+    fun aYearsLastMonthsAreTheNextOnes() {
+        // Months 11 and 12 belong to the reckoning of the year after: asked of a year, they are refused.
+        for (n in listOf(0, 11, 12)) {
+            val e = runCatching { ChineseCalendar.monthStart(2026, n) }.exceptionOrNull()
+            assertWithMessage("month $n").that(e).isInstanceOf(IllegalArgumentException::class.java)
+        }
+        assertThat(ChineseCalendar.monthStart(2026, 10)).isEqualTo(d("2026-11-09"))
     }
 
     private companion object {

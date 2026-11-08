@@ -300,7 +300,7 @@ class DatePhrases(
         HALLOWEEN("Halloween"), VALENTINES("Valentine's Day"), FOURTH_OF_JULY("Fourth of July"),
         EASTER("Easter"), THANKSGIVING("Thanksgiving"), MOTHERS_DAY("Mother's Day"), FATHERS_DAY("Father's Day"),
         ST_PATRICKS("St Patrick's Day"),
-        DIWALI("Diwali"), HOLI("Holi"), LUNAR_NEW_YEAR("Lunar New Year"), MID_AUTUMN("Mid-Autumn Festival"),
+        DIWALI("Diwali"), HOLI("Holi"), LUNAR_NEW_YEAR("Lunar New Year"), TET("Tết"), MID_AUTUMN("Mid-Autumn Festival"),
         RAMADAN("Ramadan"), EID_AL_FITR("Eid al-Fitr"), EID_AL_ADHA("Eid al-Adha"), EID("Eid"),
         HANUKKAH("Hanukkah"), PASSOVER("Passover"), ROSH_HASHANAH("Rosh Hashanah"), YOM_KIPPUR("Yom Kippur"),
     }
@@ -322,7 +322,8 @@ class DatePhrases(
         "st patricks day", "saint patricks day", "st paddys day", "paddys day" -> Holiday.ST_PATRICKS
         "diwali", "deepavali" -> Holiday.DIWALI
         "holi" -> Holiday.HOLI
-        "lunar new year", "chinese new year", "tet" -> Holiday.LUNAR_NEW_YEAR
+        "lunar new year", "chinese new year" -> Holiday.LUNAR_NEW_YEAR
+        "tet", "tết" -> Holiday.TET
         "mid-autumn festival", "mid autumn festival", "moon festival", "mooncake festival" -> Holiday.MID_AUTUMN
         "ramadan", "ramzan" -> Holiday.RAMADAN
         "eid al-fitr", "eid al fitr", "eid ul-fitr", "eid ul fitr", "eid-ul-fitr" -> Holiday.EID_AL_FITR
@@ -341,12 +342,13 @@ class DatePhrases(
      * come twice in a year, or once.
      */
     private fun holidaySpans(h: Holiday, year: Int): List<Span> = when (h) {
-        // Lakshmi Puja's night, the festival's days either side (Dhanteras to Bhai Dooj), a day's leeway.
-        Holiday.DIWALI -> listOf(around(LunarHolidays.diwali(year), 3, 3))
-        // Holika Dahan on the full moon, Holi the day after.
-        Holiday.HOLI -> listOf(around(LunarHolidays.holiFullMoon(year), 1, 2))
-        // New Year's Eve to the fourth day.
+        // Lakshmi Puja's night and the festival's days either side (Dhanteras to Bhai Dooj), a day's leeway each way.
+        Holiday.DIWALI -> listOf(around(LunarHolidays.lakshmiPuja(year), 3, 4))
+        // Holika Dahan's evening and Holi the day after, a day's leeway each way.
+        Holiday.HOLI -> listOf(around(LunarHolidays.holikaDahan(year), 1, 3))
+        // New Year's Eve to the fourth day: China's, and Vietnam's (a day, or in 1985 a month, apart).
         Holiday.LUNAR_NEW_YEAR -> listOf(around(LunarHolidays.lunarNewYear(year), 1, 4))
+        Holiday.TET -> listOf(around(LunarHolidays.tet(year), 1, 4))
         Holiday.MID_AUTUMN -> listOf(around(LunarHolidays.midAutumn(year), 1, 2))
         // The month, to Eid al-Fitr (29 or 30 days).
         Holiday.RAMADAN -> LunarHolidays.hijriMonthStarts(year, 9).map { start ->
@@ -548,7 +550,7 @@ class DatePhrases(
         private const val HOLIDAY = "(christmas eve|christmas day|christmas|xmas|new year'?s eve|new year'?s day|new year'?s|new year|" +
             "halloween|valentine'?s day|valentine'?s|valentine|thanksgiving|easter|fourth of july|july fourth|independence day|" +
             "mother'?s day|mothering sunday|father'?s day|st patrick'?s day|saint patrick'?s day|st paddy'?s day|paddy'?s day|" +
-            "diwali|deepavali|holi|lunar new year|chinese new year|tet|mid-autumn festival|mid autumn festival|moon festival|" +
+            "diwali|deepavali|holi|lunar new year|chinese new year|tet|tết|mid-autumn festival|mid autumn festival|moon festival|" +
             "mooncake festival|ramadan|ramzan|eid al-fitr|eid al fitr|eid ul-fitr|eid ul fitr|eid-ul-fitr|eid al-adha|eid al adha|" +
             "eid ul-adha|eid ul adha|eid-ul-adha|bakrid|eid|hanukkah|chanukah|hanukah|passover|pesach|rosh hashanah|rosh hashana|" +
             "yom kippur)"

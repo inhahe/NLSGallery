@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -160,6 +162,9 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
                 "Add when (\"beach last summer\", \"dog 2023\", \"christmas\") to look among the pictures taken then, " +
                 "and where (\"beach in hawaii\", \"paris\") among those taken there.")
             PlacesRow(vm, s.locationAsked)
+
+            Section("About")
+            AboutRows()
             Spacer(Modifier.height(32.dp))
         }
     }
@@ -203,6 +208,39 @@ private fun PlacesRow(vm: GalleryViewModel, asked: Boolean) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** The version, and the works the app ships under their licences (NOTICE.txt, shown whole on a tap). */
+@Composable
+private fun AboutRows() {
+    val context = LocalContext.current
+    var notice by remember { mutableStateOf<String?>(null) }
+    Text("NLSGallery ${com.lithic.gallery.BuildConfig.VERSION_NAME}", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable {
+                // The file's lines are wrapped for reading as text: each paragraph, one line here.
+                val text = context.assets.open("NOTICE.txt").use { it.readBytes().toString(Charsets.UTF_8) }
+                notice = text.trim().split(Regex("\n\\s*\n")).joinToString("\n\n") { it.replace(Regex("\\s*\n\\s*"), " ") }
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Credits and licences")
+            Text(
+                "Place names from GeoNames (CC BY 4.0); the Umm al-Qura calendar from hijridate (MIT)",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    notice?.let { text ->
+        AlertDialog(
+            onDismissRequest = { notice = null },
+            confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } },
+            title = { Text("Credits and licences") },
+            text = { Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.verticalScroll(rememberScrollState())) },
+        )
     }
 }
 

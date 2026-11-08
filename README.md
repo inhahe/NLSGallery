@@ -66,7 +66,7 @@ may", "two weeks ago", "yesterday", "march 5", "the 90s", "since 2020", "between
 even "show me photos of dogs from last summer". "Videos" asks for videos: "videos from last
 summer", "videos of the dog", "dog videos". Holidays: Christmas, New Year, Easter, Thanksgiving,
 Halloween, Valentine's Day, Mother's and Father's Day, St Patrick's Day, the Fourth of July,
-Diwali, Holi, the Lunar New Year, the Mid-Autumn Festival, Ramadan, Eid, Hanukkah, Passover,
+Diwali, Holi, the Lunar New Year, Tết, the Mid-Autumn Festival, Ramadan, Eid, Hanukkah, Passover,
 Rosh Hashanah and Yom Kippur, each on its own calendar's days ("diwali 2023", "last eid").
 The search then looks only among the pictures taken then; a date on its own lists them all,
 newest first (which works before anything is described). A chip under the search field shows
@@ -182,4 +182,5 @@ To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -st
 Place names are from [GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII`,
 `countryInfo`), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The
 Umm al-Qura calendar's months (for Ramadan and Eid) are from
-[hijridate](https://github.com/dralshehri/hijridate)'s table (MIT licence).
+[hijridate](https://github.com/dralshehri/hijridate)'s table (MIT licence). Settings → About →
+*Credits and licences* shows both notices in the app.
