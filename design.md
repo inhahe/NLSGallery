@@ -348,14 +348,17 @@ synced) and `MediaDetails`.
 
 ### Hardware
 
-`Hardware.memory`: the AI needs a phone sold with 6 GB (one reporting at least 5 GiB: 6 GB
-phones report 5.3-5.7, 4 GB ones about 3.6). Describing holds about 2 GB at once, and below
-that Android kills the app or its neighbours mid-run. A phone with less is told so once
-(`Settings.weakPhoneNoticeShown`), and `AiEngine.allowed` is false: no describing
-(`ready`), no model downloads (the screen offers none; the worker refuses), no search by
-meaning (`SearchService`'s `meaningAllowed`). Keyword, date and folder search work without the
-AI. "Use the AI anyway" (`aiOnWeakPhone`) lifts it. The app ships for 64-bit processors only, so
-that need is met wherever it installs.
+`Hardware.memory`: the AI needs a phone sold with 6 GB: the smallest usual size at least what
+Android reports, so one reporting more than 4 GiB (6 GB phones report 5.3-5.7, 4 GB ones about
+3.6), which keeps the notice and the decision the same. Describing holds about 2 GB at once,
+and below that Android kills the app or its neighbours mid-run. A phone with less is told so
+once (`Settings.weakPhoneNoticeShown`, read from the stored settings: `weakPhoneNotice` waits
+for them), and `AiEngine.allowed` is false: no describing (`ready`), no model downloads (the
+screen offers none; the worker refuses), no search by meaning (`SearchService`'s
+`meaningAllowed`). Keyword, date, place and folder search work without the AI. "Use the AI
+anyway" (`aiOnWeakPhone`) lifts it; turning it off stops a run under way, and the AI dialog
+offers Stop whenever one is. The app ships for 64-bit processors only, so that need is met
+wherever it installs.
 
 ### The GPU (Snapdragon)
 

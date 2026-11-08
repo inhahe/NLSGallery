@@ -141,6 +141,7 @@ fun GalleryScreen(
     val scope by vm.searchScope.collectAsState()
     val ai by vm.aiStatus.collectAsState()
     val secondsLeft by vm.passSecondsLeft.collectAsState()
+    val weakPhoneNotice by vm.weakPhoneNotice.collectAsState()
     val all by vm.allMedia.collectAsState()
     val aspectFixes by vm.aspectFixes.collectAsState()
     val density = LocalDensity.current
@@ -272,7 +273,7 @@ fun GalleryScreen(
     }
 
     // Once: this phone has too little memory for the AI.
-    if (ai.notAllowed && !settings.weakPhoneNoticeShown) {
+    if (weakPhoneNotice) {
         WeakPhoneDialog(
             vm.memory.soldAsGb,
             onOk = { vm.updateSettings { it.copy(weakPhoneNoticeShown = true) } },
@@ -600,7 +601,7 @@ private fun AiDialog(
         text = {
             Column {
                 when {
-                    ai.notAllowed -> Text(weakPhoneText(memoryGb) + " (Settings, AI, to use it anyway.)")
+                    ai.notAllowed && !ai.running -> Text(weakPhoneText(memoryGb) + " (Settings, AI, to use it anyway.)")
                     ai.featuresOff && !ai.running -> Text(
                         "Captions and text reading are both off (Settings, AI), so nothing is described. " +
                             "Search still finds what was described before.",
@@ -629,8 +630,8 @@ private fun AiDialog(
         },
         confirmButton = {
             when {
-                ai.notAllowed || (ai.featuresOff && !ai.running) -> TextButton(onClick = onDismiss) { Text("OK") }
                 ai.running -> TextButton(onClick = onStop) { Text("Stop") }
+                ai.notAllowed || ai.featuresOff -> TextButton(onClick = onDismiss) { Text("OK") }
                 ai.undescribed > 0 -> TextButton(onClick = onDescribe) { Text("Describe now") }
                 ai.failures > 0 -> TextButton(onClick = onRetry) { Text("Retry failed") }
                 else -> TextButton(onClick = onDismiss) { Text("OK") }

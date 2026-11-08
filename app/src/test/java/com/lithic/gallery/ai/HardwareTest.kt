@@ -11,7 +11,8 @@ class HardwareTest {
     fun enoughFromSixGigabytes() {
         // Reported by Android (GiB) -> sold as (GB), enough for the AI.
         for ((reported, sold, enough) in listOf(
-            Triple(1.8, 2, false), Triple(3.6, 4, false), Triple(4.9, 6, false),
+            // More than 4 GiB reported: not a 4 GB phone, so a 6 GB one, however much it keeps.
+            Triple(1.8, 2, false), Triple(3.6, 4, false), Triple(4.0, 4, false), Triple(4.2, 6, true), Triple(4.9, 6, true),
             Triple(5.3, 6, true), Triple(5.6, 6, true), Triple(7.3, 8, true), Triple(10.9, 12, true), Triple(15.2, 16, true),
         )) {
             val m = Hardware.Memory(gib(reported))

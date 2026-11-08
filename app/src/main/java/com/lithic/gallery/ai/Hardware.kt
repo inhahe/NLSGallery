@@ -14,14 +14,13 @@ object Hardware {
     const val NEEDED_GB = 6
 
     /**
-     * What a phone sold with [NEEDED_GB] reports at least (the kernel and the GPU keep some):
-     * 6 GB phones report about 5.3-5.7 GiB, 4 GB ones about 3.6.
+     * This phone's memory as Android reports it ([bytes]: less than it was sold with, the kernel
+     * and the GPU keeping some; 6 GB phones report about 5.3-5.7 GiB, 4 GB ones about 3.6), and
+     * whether it is enough.
      */
-    private const val NEEDED_REPORTED = 5L shl 30
-
-    /** This phone's memory as Android reports it ([bytes]), and whether it is enough. */
     class Memory(val bytes: Long) {
-        val enough: Boolean get() = bytes >= NEEDED_REPORTED
+        /** It was sold with [NEEDED_GB] or more: what the notice says, and what the AI is allowed on. */
+        val enough: Boolean get() = soldAsGb >= NEEDED_GB
 
         /** The memory as phones are sold: the smallest usual size at least what is reported ("4 GB"). */
         val soldAsGb: Int get() = SOLD_SIZES.firstOrNull { (it.toLong() shl 30) >= bytes } ?: ((bytes shr 30) + 1).toInt()

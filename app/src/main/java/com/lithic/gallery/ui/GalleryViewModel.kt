@@ -332,6 +332,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /** This phone's memory, and whether the AI has what it needs. */
     val memory: Hardware.Memory = Hardware.memory(app)
 
+    /**
+     * Whether to tell the user, once, that this phone has too little memory for the AI: from the
+     * settings as stored, so not before they are read (their defaults would say it was not told).
+     */
+    val weakPhoneNotice: StateFlow<Boolean> = app.settings.settings
+        .map { s -> !memory.enough && !s.aiOnWeakPhone && !s.weakPhoneNoticeShown }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** Where the GPU stands for reading text (Settings shows it). */
     val gpu: StateFlow<AiEngine.Gpu> = app.ai.gpu
 

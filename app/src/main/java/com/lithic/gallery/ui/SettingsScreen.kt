@@ -99,7 +99,10 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
                 Toggle("Use the AI anyway",
                     "This phone has ${vm.memory.soldAsGb} GB of memory; the AI needs ${Hardware.NEEDED_GB} GB. Describing may be " +
                         "very slow, and Android may close the app (or others) while it works.",
-                    s.aiOnWeakPhone) { v -> set { it.copy(aiOnWeakPhone = v) } }
+                    s.aiOnWeakPhone) { v ->
+                    set { it.copy(aiOnWeakPhone = v) }
+                    if (!v) vm.stopDescribing()
+                }
             }
             Row(Modifier.fillMaxWidth().clickable(onClick = onModels).padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Column(Modifier.weight(1f)) {
