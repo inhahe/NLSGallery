@@ -47,9 +47,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /**
      * Makes the parts of [item]'s description it lacks among those asked for ([captions], [ocr]),
-     * and saves the description and its embedding. A file that cannot be read is saved with its
-     * error, so it is not retried until it changes. Only the models the asked-for parts need are
-     * kept open.
+     * and saves the description and its embedding. A file that opens but cannot be decoded is
+     * saved with its error, so it is not retried until it changes; one that cannot be opened now
+     * is left as it was, for the next run. Only the models the asked-for parts need are kept open.
      */
     suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr) = mutex.withLock {
         withContext(Dispatchers.Default) {
@@ -98,6 +98,14 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                if (!canOpen(item)) {
+                    // Gone or out of reach for now (deleted while waiting, card removed, access
+                    // revoked): nothing is recorded, so the next run tries it again, and a sync
+                    // drops it if it is gone. The exception cannot tell: a missing video and a
+                    // corrupt one both make MediaMetadataRetriever throw IllegalArgumentException.
+                    Log.i(TAG, "skipped ${item.id}: it cannot be opened now")
+                    return@withContext
+                }
                 Log.w(TAG, "describing ${item.uri} failed", e)
                 dao.upsertDescription(DescriptionEntity(item.aiKey, caption, text, manual, System.currentTimeMillis(),
                     error = e.message ?: e.javaClass.simpleName))
@@ -113,6 +121,13 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             // Timings only: what the pictures show stays out of the log.
             Log.i(TAG, "described ${item.id}: decode ${tDecode}ms caption ${tCaption}ms ocr ${tOcr}ms")
         }
+    }
+
+    /** Whether [item]'s file can be opened for reading at the moment. */
+    private fun canOpen(item: MediaEntity): Boolean = try {
+        context.contentResolver.openFileDescriptor(item.contentUri, "r")?.use { true } ?: false
+    } catch (e: Exception) {
+        false
     }
 
     /** thumbsup2's embedding of caption and text ([embeddingText]), none when both are empty. */

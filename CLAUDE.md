@@ -21,7 +21,8 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   The model tests take a few minutes; `CraftTilingTest` longer.
 - `gradlew :app:testDebugUnitTest`: category rules, XMP parsing.
 - On a phone: `tools\push-test-data.bat`, `push-models.bat debug`, then run
-  `OnDeviceModelTest` / `OnDeviceBenchmark` with `adb shell am instrument -w -e class
+  `OnDeviceModelTest` / `OnDeviceBenchmark` / `DescribeFailureTest` (also on the emulator,
+  whose debug app has the models) with `adb shell am instrument -w -e class
   com.lithic.gallery.<Test> com.lithic.gallery.debug.test/androidx.test.runner.AndroidJUnitRunner`.
   Not `gradlew connectedAndroidTest`: it may uninstall the app afterwards, which deletes the
   1.2 GB of models in its folder.

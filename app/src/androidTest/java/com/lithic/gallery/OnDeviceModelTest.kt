@@ -9,6 +9,7 @@ import com.lithic.gallery.core.ai.BlipCaptioner
 import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.core.ai.Onnx
 import com.lithic.gallery.core.ai.OnnxOptions
+import com.lithic.gallery.core.ai.embeddingText
 import com.lithic.gallery.core.ai.easyocr.EasyOcr
 import com.lithic.gallery.core.image.RgbImage
 import com.lithic.gallery.core.text.BertTokenizer
@@ -63,8 +64,7 @@ class OnDeviceModelTest {
             val text = ocr.text(img)
             val o = (System.nanoTime() - t) / 1_000_000
             t = System.nanoTime()
-            val joined = listOf(caption, text).filter { it.isNotBlank() }.joinToString(" ")
-            val emb = if (joined.isEmpty()) null else minilm.embed(joined)
+            val emb = embeddingText(caption, text)?.let(minilm::embed)
             val e = (System.nanoTime() - t) / 1_000_000
             capMs += c; ocrMs += o; embMs += e; n++
             Log.i(TAG, "$name ${img.width}x${img.height}: caption ${c} ms, ocr ${o} ms, embed ${e} ms")

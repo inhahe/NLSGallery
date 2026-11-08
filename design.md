@@ -106,8 +106,9 @@ ships in assets.
   same way).
 - Room (`Database.kt`, version 2; migrations kept, schemas in `app/schemas`): `media` (the
   library copy), `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`;
-  caption/ocr nullable per part; `error` marks a file that could not be read, not retried until
-  it changes), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded).
+  caption/ocr nullable per part; `error` marks a file that opened but could not be decoded, not
+  retried until it changes; one that cannot be opened at the time, deleted or out of reach, gets
+  no row and is tried by the next run), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded).
 - `MediaRepository.sync()` diffs MediaStore against the table (upsert changed, delete gone);
   run at start, on MediaStore change notifications (debounced) while open, and by the workers.
 - `SettingsStore`: DataStore preferences, one `Settings` value.
