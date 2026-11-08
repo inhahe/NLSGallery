@@ -46,11 +46,15 @@ object Work {
     /**
      * Describes everything not yet described. Started by the user it runs now, whatever the
      * battery; started automatically it waits for the battery (and charging, if so set).
+     * During a run (whose lists were made when it began) one more run is queued after it, so
+     * files added or reset meanwhile are not left out; a queued one is not doubled.
      */
     suspend fun describe(context: Context, userInitiated: Boolean, s: Settings) {
         val wm = WorkManager.getInstance(context)
-        val running = wm.getWorkInfosForUniqueWorkFlow(DESCRIBE).first().any { it.state == WorkInfo.State.RUNNING }
-        if (running) return
+        val infos = wm.getWorkInfosForUniqueWorkFlow(DESCRIBE).first()
+        val running = infos.any { it.state == WorkInfo.State.RUNNING }
+        val queuedAfter = infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+        if (running && queuedAfter) return
         val constraints = if (userInitiated) Constraints.NONE else Constraints.Builder()
             .setRequiresBatteryNotLow(true)
             .setRequiresCharging(s.onlyWhileCharging)
@@ -59,7 +63,7 @@ object Work {
             .setConstraints(constraints)
             .setInputData(workDataOf(KEY_USER to userInitiated))
             .build()
-        wm.enqueueUniqueWork(DESCRIBE, ExistingWorkPolicy.REPLACE, request)
+        wm.enqueueUniqueWork(DESCRIBE, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
     }
 
     fun stopDescribing(context: Context) {
@@ -221,7 +225,7 @@ class NewMediaWorker(context: Context, params: WorkerParameters) : CoroutineWork
 class ModelDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as GalleryApp
-        val keys = inputData.getStringArray(Work.KEY_KEYS)?.toList() ?: return Result.success()
+        val keys = inputData.getNullableStringArray(Work.KEY_KEYS)?.filterNotNull() ?: return Result.success()
         val total = app.models.totalSize(keys.filter { !app.models.isReady(it) })
         runCatching { setForeground(Work.downloadNotification(applicationContext, id, 0, total)) }
         var lastShown = 0L

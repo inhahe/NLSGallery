@@ -54,8 +54,9 @@ object MediaDecoding {
             for (f in fractions) {
                 val t = (durationUs * f).toLong()
                 val bmp = if (w > 0 && h > 0 && max(w, h) > maxSide) {
-                    val s = maxSide.toDouble() / max(w, h)
-                    r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, (w * s).toInt(), (h * s).toInt())
+                    // The frame comes out upright and is fitted, keeping its shape, into this box:
+                    // a square, so a rotated video is not fitted into its unrotated size.
+                    r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, maxSide, maxSide)
                 } else {
                     r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 } ?: continue
@@ -99,6 +100,21 @@ object MediaDecoding {
         ""
     }
 
+    /** XML's character references, each decoded once (so "&amp;lt;" is the text "&lt;"). */
+    internal fun unescapeXml(s: String): String =
+        Regex("&(#x[0-9A-Fa-f]+|#[0-9]+|amp|lt|gt|quot|apos);").replace(s) { m ->
+            val e = m.groupValues[1]
+            when {
+                e.startsWith("#x") -> e.substring(2).toIntOrNull(16)?.let { String(Character.toChars(it)) } ?: m.value
+                e.startsWith("#") -> e.substring(1).toIntOrNull()?.let { String(Character.toChars(it)) } ?: m.value
+                e == "amp" -> "&"
+                e == "lt" -> "<"
+                e == "gt" -> ">"
+                e == "quot" -> "\""
+                else -> "'"
+            }
+        }
+
     /** Camera firmware fills ImageDescription with placeholders like "OLYMPUS DIGITAL CAMERA". */
     private fun String.isPlaceholder() = matches(Regex("(?i)(olympus digital camera|sony dsc|default|image|\\s+)"))
 
@@ -108,8 +124,7 @@ object MediaDecoding {
                 ?: Regex("$tag=\"([^\"]*)\"").find(xmp)?.groupValues?.get(1)
                 ?: continue
             val text = Regex("<rdf:li[^>]*>(.*?)</rdf:li>", RegexOption.DOT_MATCHES_ALL).find(block)?.groupValues?.get(1) ?: block
-            val clean = text.replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&lt;", "<")
-                .replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").trim()
+            val clean = unescapeXml(text.replace(Regex("<[^>]+>"), "")).trim()
             if (clean.isNotEmpty()) return clean
         }
         return null
@@ -123,7 +138,7 @@ object MediaDecoding {
             val w = src.width
             val h = src.height
             val out = ByteArray(w * h * 3)
-            val rows = max(1, 1 shl 20 / max(1, w))
+            val rows = max(1, (1 shl 20) / max(1, w))
             val buf = IntArray(w * rows)
             var y = 0
             while (y < h) {

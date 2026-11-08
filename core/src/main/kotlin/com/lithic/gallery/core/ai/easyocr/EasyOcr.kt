@@ -50,9 +50,11 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
     /** EasyOCR's `detect`: the text boxes in [img], grouped into lines and rotated boxes. */
     fun detect(img: RgbImage): TextGrouping.Groups {
         val maps = scoreMaps(img)
-        val scale = (1.0 / maps.ratio * 2).toFloat()
+        // adjustResultCoordinates: the float32 boxes times a float64 (ratio * 2) pair, computed
+        // in float64 and stored back as float32, then truncated to int32.
+        val scale = 1.0 / maps.ratio * 2
         val polys = CraftBoxes.detect(maps.text, maps.link, maps.width, maps.height)
-            .map { b -> IntArray(8) { (b[it] * scale).toInt() } }
+            .map { b -> IntArray(8) { (b[it].toDouble() * scale).toFloat().toInt() } }
         return TextGrouping.group(polys)
     }
 

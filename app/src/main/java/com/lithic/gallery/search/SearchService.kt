@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Search over every file's description, OCR text, own caption, file name and folder, as
@@ -35,18 +36,21 @@ class SearchService(
     private var mediaIds = LongArray(0)
     private var dates = LongArray(0)
     private var embedder: MiniLmEmbedder? = null
-    @Volatile private var stale = true
+    /** Bumped by [invalidate]; the index is current when [built] equals it. */
+    private val wanted = AtomicLong(1)
+    @Volatile private var built = 0L
 
     /** Files or descriptions changed: the next search rebuilds the index first. */
     fun invalidate() {
-        stale = true
+        wanted.incrementAndGet()
     }
 
     /** A result: the media id and how it was found. */
     data class Result(val mediaId: Long, val score: Double, val semanticOnly: Boolean, val similarity: Float?)
 
+    /** Rebuilds the index; it counts as current only once the new one is in place. */
     private suspend fun refresh() = withContext(Dispatchers.Default) {
-        stale = false
+        val target = wanted.get()
         val rows = dao.searchable().sortedByDescending { it.sortDate }
         val ms = MiniSearch(HybridSearch.FIELDS)
         val ids = LongArray(rows.size)
@@ -69,6 +73,7 @@ class SearchService(
             embeddings = vectors
             mediaIds = ids
             dates = ds
+            built = target
         }
     }
 
@@ -79,7 +84,7 @@ class SearchService(
     suspend fun search(query: String, fields: List<String>): List<Result> = withContext(Dispatchers.Default) {
         val q = query.trim()
         if (q.isEmpty()) return@withContext emptyList()
-        if (stale) refresh()
+        if (built != wanted.get()) refresh()
         val queryVector = embed(q)
         mutex.withLock {
             val ds = dates

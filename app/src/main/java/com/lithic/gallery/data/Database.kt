@@ -56,7 +56,7 @@ data class MediaEntity(
 
 /**
  * What the AI said about a file's contents: thumbsup2's `ai_descriptions` row, keyed the same way.
- * A null part has not been made yet (it was switched off when the file was described).
+ * A null part has not been made yet: its pass has not reached the file, or it was switched off.
  */
 @Entity(tableName = "ai_descriptions")
 data class DescriptionEntity(

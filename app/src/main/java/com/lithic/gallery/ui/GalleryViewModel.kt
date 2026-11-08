@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -62,10 +63,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     val allMedia: StateFlow<List<MediaEntity>> =
         app.repository.media.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _category = MutableStateFlow<Category?>(null)
-    val category: StateFlow<Category> = combine(_category, settings) { c, s -> c ?: s.lastCategory }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Category.CAMERA)
-
     /** The tabs shown, in order. */
     val tabs: StateFlow<List<Category>> = settings.map { s ->
         Category.entries.filter {
@@ -76,6 +73,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Category.entries.filter { it != Category.ALL })
+
+    private val _category = MutableStateFlow<Category?>(null)
+    /** The tab shown: the one chosen, or the first if that one has been hidden. */
+    val category: StateFlow<Category> = combine(_category, settings, tabs) { c, s, t ->
+        (c ?: s.lastCategory).takeIf { it in t } ?: t.first()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Category.CAMERA)
 
     /** The current tab's files, newest first. */
     val visibleMedia: StateFlow<List<MediaEntity>> = combine(allMedia, category, settings) { all, c, s ->
@@ -182,7 +185,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
         viewModelScope.launch {
             merge(allMedia.map { it.size.toLong() }, app.db.ai().observeVersion())
-                .debounce(5000)
+                .sample(5000)
                 .collect { if (query.value.isNotBlank()) indexVersion.value++ }
         }
         // Keep the media trigger in step with its setting.
@@ -231,7 +234,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun cancelDownload() = Work.cancelDownload(app)
 
-    fun deleteModel(key: String) = app.models.delete(key)
+    fun deleteModel(key: String) {
+        app.models.delete(key)
+        // Search stops using it at once (it checks the files); this frees what it had open.
+        if (key == ModelManager.MINILM) viewModelScope.launch { app.search.releaseEmbedder() }
+    }
 
     fun modelSizes(): Map<String, Long> = app.models.sources.mapValues { it.value.size }
 

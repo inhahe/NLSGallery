@@ -17,11 +17,10 @@ class MiniLmEmbedderTest {
     fun embeddingsMatchThumbsup2() {
         ModelTestSupport.store.weightsDir("minilm")
         MiniLmEmbedder(ModelTestSupport.onnx, ModelTestSupport.tokenizer).use { minilm ->
-            val describer = Describer(null, null, minilm)
             for ((name, ref) in reference) {
                 val caption = ref["caption"]!!.jsonPrimitive.content
                 val ocr = ref["ocr"]!!.jsonPrimitive.content
-                val got = describer.embed(caption, ocr)
+                val got = embeddingText(caption, ocr)?.let(minilm::embed)
                 val stored = ref["embedding"]
                 if (stored == null || stored is JsonNull) {
                     assertWithMessage("$name: thumbsup2 stored no embedding").that(got).isNull()

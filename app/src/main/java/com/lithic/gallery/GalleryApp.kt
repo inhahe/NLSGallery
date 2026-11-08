@@ -1,6 +1,10 @@
 package com.lithic.gallery
 
 import android.app.Application
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -14,6 +18,7 @@ import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.ui.MediaThumbFetcher
 import com.lithic.gallery.ui.MediaThumbKeyer
 import com.lithic.gallery.work.Work
+import kotlinx.coroutines.launch
 
 /** The app's single instances, shared by the UI and the background workers in one process. */
 class GalleryApp : Application(), SingletonImageLoader.Factory {
@@ -37,5 +42,13 @@ class GalleryApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         Work.createChannels(this)
+        // Out of sight (not merely rotated), the query embedder's memory goes back; the next
+        // search opens it again.
+        val process = ProcessLifecycleOwner.get()
+        process.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStop(owner: LifecycleOwner) {
+                process.lifecycleScope.launch { search.releaseEmbedder() }
+            }
+        })
     }
 }

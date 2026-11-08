@@ -6,6 +6,7 @@ import com.lithic.gallery.core.ai.BlipCaptioner
 import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.core.ai.Onnx
 import com.lithic.gallery.core.ai.OnnxOptions
+import com.lithic.gallery.core.ai.embeddingText
 import com.lithic.gallery.core.ai.easyocr.EasyOcr
 import com.lithic.gallery.core.text.BertTokenizer
 import com.lithic.gallery.data.AiDao
@@ -114,10 +115,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         }
     }
 
-    /** thumbsup2's embedding: of `" ".join(filter(None, [caption, ocr]))`, none when both are empty. */
+    /** thumbsup2's embedding of caption and text ([embeddingText]), none when both are empty. */
     private suspend fun saveEmbedding(hash: String, caption: String, text: String) {
-        val joined = listOf(caption.trim(), text.trim()).filter { it.isNotEmpty() }.joinToString(" ")
-        if (joined.isEmpty()) return
+        val joined = embeddingText(caption, text) ?: return
         val textHash = sha1(joined)
         if (dao.embedding(hash, MiniLmEmbedder.MODEL_ID)?.textHash == textHash) return
         val v = minilm!!.embed(joined)

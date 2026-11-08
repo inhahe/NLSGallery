@@ -126,6 +126,10 @@ class ModelManager(private val context: Context) {
                 } catch (e: IOException) {
                     set(key, ModelState.Failed(e.message ?: e.javaClass.simpleName))
                     throw e
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Stopped (cancelled, or the network went): the partial file stays to resume from.
+                    set(key, ModelState.Missing)
+                    throw e
                 }
                 before += sources.getValue(key).size
             }
@@ -173,6 +177,13 @@ class ModelManager(private val context: Context) {
         }
         try {
             val code = conn.responseCode
+            if (code == 416 && have > 0) {
+                // Nothing left to send: the part file is complete if it is as long as the file.
+                val full = conn.getHeaderField("Content-Range")?.substringAfter('/')?.toLongOrNull()
+                if (full == have) { progress(have, have); return }
+                part.delete()
+                throw IOException("the partial download did not match; it will start over")
+            }
             val append = code == HttpURLConnection.HTTP_PARTIAL
             if (!append) {
                 if (code != HttpURLConnection.HTTP_OK) throw IOException("HTTP $code from $url")

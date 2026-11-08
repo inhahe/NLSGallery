@@ -89,7 +89,7 @@ fun ModelsScreen(vm: GalleryViewModel, onBack: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        if (state == ModelState.Ready) {
+                        if (state == ModelState.Ready || state is ModelState.Failed) {
                             TextButton(onClick = { vm.deleteModel(key) }) { Text("Remove") }
                         }
                     }

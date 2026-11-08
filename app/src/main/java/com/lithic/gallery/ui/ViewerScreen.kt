@@ -301,15 +301,17 @@ private fun DetailsSheet(item: MediaEntity, hit: SearchService.Result?, vm: Gall
                 if (item.isVideo && item.durationMs > 0) Field("Length", formatDuration(item.durationMs))
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 val desc = d
+                val s by vm.settings.collectAsState()
                 when {
                     desc == null -> Field("AI description", "Not described yet")
                     desc.error != null -> Field("AI description", "Could not be described: ${desc.error}")
                     else -> {
-                        Field("AI description", desc.caption ?: "(captions off when described)")
-                        Field("Text in image", desc.ocr?.ifBlank { "(none found)" } ?: "(text reading off when described)")
+                        Field("AI description", desc.caption ?: if (s.captions) "Not described yet" else "(captions are off)")
+                        Field("Text in image", desc.ocr?.ifBlank { "(none found)" }
+                            ?: if (s.ocr) "Not read yet (text is read after every picture has a caption)" else "(text reading is off)")
                     }
                 }
-                if (!desc?.manualCaption.isNullOrBlank()) Field("Own caption", desc!!.manualCaption)
+                desc?.manualCaption?.takeIf { it.isNotBlank() }?.let { Field("Own caption", it) }
                 if (hit != null) {
                     Field("Search", buildString {
                         append(if (hit.semanticOnly) "Found by meaning" else "Matched words")

@@ -34,8 +34,10 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
 
 `appVersion` in `gradle.properties` (major.minor.patch) with `appVersionCode` =
 major×10000 + minor×100 + patch beside it; the build refuses them if they disagree. Bump it
-whenever the app is rebuilt to be installed or released: patch for fixes, minor for features,
-major for overhauls.
+whenever the app is rebuilt to be installed for use or released: patch for fixes, minor for
+features, major for overhauls. Debug builds installed to test (on the emulator, or a phone
+during development) do not count: they carry `-debug` and replace each other. 0.1.0 is the
+first build handed over.
 
 ## Traps met
 

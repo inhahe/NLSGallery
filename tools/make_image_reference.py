@@ -87,7 +87,10 @@ def write_ops():
         (OPS / f"warp_{name}.shape").write_text(f"{warped.shape[1]} {warped.shape[0]}")
 
 
-def write_ocr():
+def write_ocr(canvas=2560):
+    """EasyOCR's boxes and text at a canvas size: 2560 (its default, thumbsup2's) to
+    reference/ocr.json; a smaller one, which shrinks every test image first as the app's
+    reduced text detail does a camera photo, to reference/ocr_canvas<N>.json."""
     import easyocr
     reader = easyocr.Reader(["en"], gpu=False, quantize=False, verbose=False)
     manifest = json.loads((DATA / "manifest.json").read_text(encoding="utf-8"))
@@ -95,8 +98,8 @@ def write_ocr():
     for name in sorted(manifest):
         with Image.open(DATA / name) as im:
             arr = np.array(im.convert("RGB"))  # what thumbsup2's worker passes
-        hor, free = reader.detect(arr)
-        result = reader.readtext(arr)
+        hor, free = reader.detect(arr, canvas_size=canvas)
+        result = reader.readtext(arr, canvas_size=canvas)
         out[name] = {
             "horizontal": [[int(v) for v in b] for b in hor[0]],
             "free": [[[float(c) for c in p] for p in b] for b in free[0]],
@@ -105,7 +108,8 @@ def write_ocr():
             "text": " ".join(text for _, text, _ in result).strip(),
         }
         print(name, repr(out[name]["text"][:80]))
-    (HERE / "reference" / "ocr.json").write_text(json.dumps(out, indent=0), encoding="utf-8")
+    dest = "ocr.json" if canvas == 2560 else f"ocr_canvas{canvas}.json"
+    (HERE / "reference" / dest).write_text(json.dumps(out, indent=0), encoding="utf-8")
 
 
 def write_raw():
@@ -125,10 +129,12 @@ def write_raw():
 if __name__ == "__main__":
     import sys
     torch.set_num_threads(8)
-    parts = sys.argv[1:] or ["raw", "ops", "ocr"]
+    parts = sys.argv[1:] or ["raw", "ops", "ocr", "ocr448"]
     if "raw" in parts:
         write_raw()
     if "ops" in parts:
         write_ops()
     if "ocr" in parts:
         write_ocr()
+    if "ocr448" in parts:
+        write_ocr(448)

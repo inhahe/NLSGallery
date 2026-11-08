@@ -39,6 +39,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -257,6 +258,10 @@ private fun FastScroller(
         val thumbPx = with(density) { 48.dp.toPx() }
         val fraction = if (rows.isEmpty()) 0f else state.firstVisibleItemIndex / (rows.size - 1).coerceAtLeast(1).toFloat()
         val y = (trackPx - thumbPx) * fraction.coerceIn(0f, 1f)
+        // The drag outlives these values (the thumb moves, the list grows): read them current.
+        val thumbY by rememberUpdatedState(y)
+        val travel by rememberUpdatedState(trackPx - thumbPx)
+        val lastRow by rememberUpdatedState(rows.size - 1)
         AnimatedVisibility(visible || dragging, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopEnd)) {
             Box(Modifier.fillMaxHeight().width(56.dp)) {
                 if (dragging) {
@@ -281,15 +286,19 @@ private fun FastScroller(
                         .align(Alignment.TopEnd)
                         .offset { IntOffset(0, y.roundToInt()) }
                         .size(36.dp, 48.dp)
-                        .pointerInput(rows.size) {
+                        .pointerInput(thumbPx) {
+                            // The finger's position down the track; the thumb follows it, so
+                            // positions relative to the thumb would not say where it is.
+                            var finger = 0f
                             detectVerticalDragGestures(
-                                onDragStart = { dragging = true; visible = true },
+                                onDragStart = { at -> finger = thumbY + at.y; dragging = true; visible = true },
                                 onDragEnd = { dragging = false },
                                 onDragCancel = { dragging = false },
-                            ) { change, _ ->
+                            ) { change, dy ->
                                 change.consume()
-                                val pos = (y + change.position.y - thumbPx / 2) / (trackPx - thumbPx)
-                                val target = (pos.coerceIn(0f, 1f) * (rows.size - 1)).roundToInt()
+                                finger += dy
+                                val pos = (finger - thumbPx / 2) / travel
+                                val target = (pos.coerceIn(0f, 1f) * lastRow).roundToInt()
                                 scope.launch { state.scrollToItem(target) }
                             }
                         },

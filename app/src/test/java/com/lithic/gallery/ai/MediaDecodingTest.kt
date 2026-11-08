@@ -19,4 +19,10 @@ class MediaDecodingTest {
         val empty = """<dc:description><rdf:Alt><rdf:li xml:lang="x-default"></rdf:li></rdf:Alt></dc:description>"""
         assertThat(MediaDecoding.xmpCaption(empty)).isNull()
     }
+
+    @Test
+    fun xmlReferencesAreDecodedOnce() {
+        assertThat(MediaDecoding.unescapeXml("&amp;lt;b&amp;gt; &lt;i&gt; &#xA9; &#10;x &quot;q&quot; &apos;")).isEqualTo("&lt;b&gt; <i> © \nx \"q\" '")
+        assertThat(MediaDecoding.unescapeXml("plain & simple &unknown;")).isEqualTo("plain & simple &unknown;")
+    }
 }

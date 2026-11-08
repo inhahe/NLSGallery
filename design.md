@@ -22,7 +22,7 @@ step identically:
 | Step | thumbsup2 | app (`core/`) | Verified by |
 |---|---|---|---|
 | Caption | `Salesforce/blip-image-captioning-base`, transformers 5.5.4 processor, `generate(max_new_tokens=40)` (greedy), `decode(skip_special_tokens=True).strip()` | `BlipCaptioner`: torchvision's 8-bit antialiased bicubic (`Resample.torch`), CLIP normalization, greedy decoding over two graphs, `BertTokenizer.decode` | `BlipCaptionerTest`: word-for-word equal on all 42 test images |
-| OCR | EasyOCR 1.7.2 `Reader(['en']).readtext(np.array(rgb))`, joined by spaces | `EasyOcr`: CRAFT score maps → `CraftBoxes` (connected components, dilation, OpenCV's hull and rotating calipers, `boxPoints`) → `TextGrouping` → `Crops` (OpenCV bilinear, perspective warp) → `Recognizer` (Pillow bicubic, CTC greedy, contrast retry) | `EasyOcrTest`: same boxes and same text on all 42 images |
+| OCR | EasyOCR 1.7.2 `Reader(['en']).readtext(np.array(rgb))`, joined by spaces | `EasyOcr`: CRAFT score maps → `CraftBoxes` (connected components, dilation, OpenCV's hull and rotating calipers, `boxPoints`) → `TextGrouping` → `Crops` (OpenCV bilinear, perspective warp) → `Recognizer` (Pillow bicubic, CTC greedy, contrast retry) | `EasyOcrTest`: same boxes and same text on all 42 images, at the default canvas and shrunk to 448 |
 | Embedding | `sentence-transformers/all-MiniLM-L6-v2`, `encode(normalize_embeddings=True)` | `MiniLmEmbedder` + `BertTokenizer.encode` (max 256 tokens) | `MiniLmEmbedderTest`: cosine > 0.99999; `BertTokenizerTest` |
 | Keyword search | MiniSearch 7.2: fields aiCaption, aiOcr, caption, filename, path; `prefix: true, fuzzy: 0.2, combineWith: 'AND'` | `MiniSearch` (port: BM25+, prefix weight 0.375, fuzzy 0.45, JS rounding) | `MiniSearchTest`: same ids, same scores, 164 queries |
 | Hybrid | BM25 top 200 + cosine top 200, RRF k=60, best 500; semantic only if description or OCR field searched | `HybridSearch` | by construction (small) |
@@ -133,6 +133,13 @@ upright, video frames included) through a Coil fetcher (`MediaThumbFetcher`), re
 size buckets so the memory cache is shared across zoom levels. The header (search field, AI
 button, tabs) slides away on scroll down. A fast scroller shows the month.
 
+### Screens
+
+`AppRoot` (`MainActivity`) shows the gallery, and over it the viewer, settings or models
+screen. The gallery stays composed underneath (undrawn, out of the semantics tree, touches
+blocked by the covering screen), so closing one returns to the same scroll position, tab and
+search results.
+
 ### Viewer
 
 `HorizontalPager` over the list the thumbnail was opened from (tab or search results); photos
@@ -159,7 +166,9 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 - `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's) plus the embeddings,
   rebuilt from the database by the first search after files or descriptions change (not at each
   change: describing changes them every couple of seconds; an open search reruns at most every
-  5 s); queries are embedded with a MiniLM session kept for search; ties break newest first.
+  5 s); queries are embedded with a MiniLM session kept for search, freed (about 90 MB) when
+  the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM is
+  removed; ties break newest first.
 
 ### Background work (`work/Workers.kt`)
 

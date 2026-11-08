@@ -15,6 +15,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,7 +38,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -135,17 +140,40 @@ private fun AppRoot(vm: GalleryViewModel) {
         "models" -> Route.Models
         else -> Route.Gallery
     }
-    when (route) {
-        Route.Gallery -> GalleryScreen(
-            vm,
-            onOpen = { i -> viewerIndex = i; routeName = "viewer" },
-            onOpenSearchHit = { i -> viewerIndex = i; routeName = "viewer" },
-            onSettings = { routeName = "settings" },
-            onModels = { routeName = "models" },
-        )
-        is Route.Viewer -> ViewerScreen(vm, route.index, onBack = { routeName = "gallery" })
-        Route.Settings -> SettingsScreen(vm, onBack = { routeName = "gallery" }, onModels = { routeName = "models" })
-        Route.Models -> ModelsScreen(vm, onBack = { routeName = "gallery" })
+    val covered = route != Route.Gallery
+    // The search field, covered, must not keep the keyboard up over the screen covering it.
+    val focus = LocalFocusManager.current
+    LaunchedEffect(covered) { if (covered) focus.clearFocus(force = true) }
+    Box(Modifier.fillMaxSize()) {
+        // The gallery stays composed under the other screens, so its scroll position, search
+        // results and header are as they were when one of them is closed. Covered, it is not
+        // drawn and not offered to accessibility services.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = if (covered) 0f else 1f }
+                .then(if (covered) Modifier.clearAndSetSemantics {} else Modifier),
+        ) {
+            GalleryScreen(
+                vm,
+                onOpen = { i -> viewerIndex = i; routeName = "viewer" },
+                onOpenSearchHit = { i -> viewerIndex = i; routeName = "viewer" },
+                onSettings = { routeName = "settings" },
+                onModels = { routeName = "models" },
+            )
+        }
+        if (covered) {
+            // Its own pointer input makes it the touch target everywhere, so no touch falls
+            // through to the gallery beneath.
+            Box(Modifier.fillMaxSize().pointerInput(Unit) {}) {
+                when (route) {
+                    is Route.Viewer -> ViewerScreen(vm, route.index, onBack = { routeName = "gallery" })
+                    Route.Settings -> SettingsScreen(vm, onBack = { routeName = "gallery" }, onModels = { routeName = "models" })
+                    Route.Models -> ModelsScreen(vm, onBack = { routeName = "gallery" })
+                    Route.Gallery -> Unit
+                }
+            }
+        }
     }
 }
 
