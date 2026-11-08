@@ -29,6 +29,10 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   `tools/emu-search.sh "query" out.png` (refuses unless the gallery is in front, so keystrokes
   never land in another app).
 - One APK per ABI: phones take `app-arm64-v8a-*.apk`.
+- Release: `build-release.bat` (signed with the key `keystore.properties` names, kept in
+  `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`).
+  Release builds are minified: after touching reflection-sensitive code (ONNX Runtime, Room,
+  serialization, WorkManager), run the release APK on the emulator, not only the debug one.
 
 ## Version
 

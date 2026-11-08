@@ -76,9 +76,34 @@ off.
 messages in full detail and camera photos and videos at half size, about 10 seconds each instead
 of a minute; *Full* reads everything as thumbsup2 does; *Fast* reads everything at half size.
 
+## Installing
+
+With the phone connected by USB (USB debugging on in Developer options, and this computer
+allowed when the phone asks), `install-on-phone.bat` builds the release version and installs
+it. Run it again to update: descriptions, settings and models are kept.
+
+**Back up the release key** (`C:\Users\Computer\.android\lithic-gallery-release.jks`) **and
+`keystore.properties`**, which holds its password. Android installs an update only if it is
+signed with the same key. A build signed with another key has to be uninstalled first, which
+deletes the descriptions and the downloaded models.
+
 ## Building
 
 Gradle (JDK 17+): `gradlew :app:assembleDebug` makes one APK per processor type in
-`app/build/outputs/apk/debug/` (`app-arm64-v8a-debug.apk` for phones). `gradlew :core:test`
-compares the on-device pipeline with thumbsup2's output (see `tools/README.md` for the test data
-and weights it needs). `design.md` describes how it works.
+`app/build/outputs/apk/debug/` (`app-arm64-v8a-debug.apk` for phones, package
+`com.lithic.gallery.debug`, installed beside the release one). `build-release.bat` makes the
+signed release APKs in `app/build/outputs/apk/release/`. It needs `keystore.properties` (not
+in git), which names the key:
+
+```
+storeFile=C:/path/to/lithic-gallery-release.jks
+storePassword=...
+keyAlias=lithic-gallery
+keyPassword=...
+```
+
+To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -storetype PKCS12
+-alias lithic-gallery -keyalg RSA -keysize 4096 -validity 36500`.
+
+`gradlew :core:test` compares the on-device pipeline with thumbsup2's output (see
+`tools/README.md` for the test data and weights it needs). `design.md` describes how it works.
