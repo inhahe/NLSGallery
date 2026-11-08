@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Lithic Gallery</string>
+    <string name="app_name">NLSGallery</string>
     <string name="notification_channel_ai">Describing photos</string>
     <string name="notification_channel_ai_description">Progress while photos and videos are described for search</string>
 </resources>

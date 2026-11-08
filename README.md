@@ -1,6 +1,6 @@
-# Lithic Gallery
+# NLSGallery
 
-A gallery for Android that shows every photo and video on the phone (not only what arrived
+NLSGallery (Natural Language Search Gallery) is a gallery for Android that shows every photo and video on the phone (not only what arrived
 after it was installed), sorted into tabs, laid out without cropping, and searchable by what
 the pictures show. The descriptions are made on the phone by the same AI models
 [thumbsup2](../thumbsup2) uses, and searched the same way.

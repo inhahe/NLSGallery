@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LithicGallery"
+rootProject.name = "NLSGallery"
 include(":core")
 include(":app")

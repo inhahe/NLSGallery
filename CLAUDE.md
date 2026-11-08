@@ -1,4 +1,8 @@
-# Lithic Gallery
+# NLSGallery
+
+Natural Language Search Gallery. Its package id stays `com.lithic.gallery` (the name it had
+before): Android would take another id for another app, and updating would lose the models and
+descriptions in its folder.
 
 - Architecture and features: `design.md`. Read it before a change whose effects leave the file
   you are editing.

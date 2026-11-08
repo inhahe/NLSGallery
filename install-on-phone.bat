@@ -53,7 +53,7 @@ if not "%RC%"=="0" (
 )
 
 echo.
-echo Installed. Open "Lithic Gallery" on the phone. The AI models (1.2 GB) download from the
+echo Installed. Open "NLSGallery" on the phone. The AI models (1.2 GB) download from the
 echo app's AI models screen, or run  push-models.bat  to copy them from this computer.
 "%ADB%" -d shell pm path %PKG%.debug >nul 2>&1
 if not errorlevel 1 (

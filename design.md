@@ -1,4 +1,4 @@
-# Lithic Gallery: design
+# NLSGallery: design
 
 An Android gallery for every photo and video on the phone, sorted into tabs by where they came
 from, laid out without cropping, and searchable by what they show: the same AI descriptions,
