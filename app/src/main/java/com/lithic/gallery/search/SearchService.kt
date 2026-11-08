@@ -24,7 +24,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Search over every file's description, OCR text, own caption, file name and folder, as
  * thumbsup2's search page does it: keyword ranking (MiniSearch's BM25+, prefix and fuzzy) blended
- * with meaning (MiniLM embeddings) by Reciprocal Rank Fusion.
+ * with meaning (MiniLM embeddings) by Reciprocal Rank Fusion. Keywords are also looked for in
+ * where each file was taken ([PLACE]), which thumbsup2 does not have.
  *
  * The index follows the database: the first search after [invalidate] reads every file's
  * [SearchSignature] and re-indexes only the files whose signature changed, reading their text and
@@ -37,10 +38,12 @@ open class SearchService(
     private val tokenizer: () -> BertTokenizer,
     /** Whether search by meaning may run (the phone may run the AI). */
     private val meaningAllowed: suspend () -> Boolean = { true },
+    /** The words a file taken at (latitude, longitude) is found by in [PLACE], or null for none. */
+    private val placeWords: (Double, Double) -> String? = { _, _ -> null },
 ) {
     /** Guards the index and the documents; never held while the database is read. */
     private val mutex = Mutex()
-    private val index = MiniSearch(HybridSearch.FIELDS)
+    private val index = MiniSearch(FIELDS)
 
     /** A file as indexed: its MiniSearch id, its signature's hash, its date, its embedding. */
     private class Doc(val id: Int, val mediaId: Long, var signature: Long, var date: Long, var vector: FloatArray?)
@@ -102,8 +105,9 @@ open class SearchService(
             else -> ids.chunked(900).flatMap { dao.searchable(it) }
         }
         val vectors = embeddingsOf(rows.mapTo(HashSet()) { it.aiKey })
+        val places = placesOf(rows)
         mutex.withLock {
-            apply(plan, rows, vectors)
+            apply(plan, rows, vectors, places)
             if (target > built) built = target
         }
     }
@@ -125,7 +129,7 @@ open class SearchService(
         return Plan(changed, byMedia.keys.filter { it !in seen }, redated)
     }
 
-    private fun apply(plan: Plan, rows: List<MediaWithDescription>, vectors: Map<String, FloatArray>) {
+    private fun apply(plan: Plan, rows: List<MediaWithDescription>, vectors: Map<String, FloatArray>, places: Map<Long, String>) {
         for (mediaId in plan.gone) {
             val doc = byMedia.remove(mediaId) ?: continue
             byId.remove(doc.id)
@@ -135,13 +139,25 @@ open class SearchService(
         // asked for, takes it out.
         for (r in rows) {
             val doc = byMedia[r.id] ?: Doc(nextId++, r.id, 0, 0, null).also { byMedia[r.id] = it; byId[it.id] = it }
-            index.add(doc.id, listOf(r.caption ?: "", r.ocr ?: "", r.manualCaption ?: "", r.displayName, r.relativePath + r.displayName))
+            index.add(doc.id, listOf(r.caption ?: "", r.ocr ?: "", r.manualCaption ?: "", r.displayName, r.relativePath + r.displayName, places[r.id] ?: ""))
             doc.signature = plan.changed.getValue(r.id)
             doc.date = r.sortDate
             doc.vector = vectors[r.aiKey]
         }
         for (s in plan.redated) byMedia[s.id]?.date = s.sortDate
         if (plan.gone.isNotEmpty() || rows.isNotEmpty() || plan.redated.isNotEmpty()) nearest = null
+    }
+
+    /** The words of where each of [rows] was taken, by media id (none for the files that do not say). */
+    private fun placesOf(rows: List<MediaWithDescription>): Map<Long, String> {
+        val byPoint = HashMap<Pair<Double, Double>, String?>()
+        val out = HashMap<Long, String>()
+        for (r in rows) {
+            val lat = r.lat ?: continue
+            val lon = r.lon ?: continue
+            byPoint.getOrPut(lat to lon) { placeWords(lat, lon) }?.let { out[r.id] = it }
+        }
+        return out
     }
 
     /** The stored embeddings of descriptions [keys], by key. */
@@ -199,6 +215,12 @@ open class SearchService(
     }
 
     companion object {
+        /** Where the file was taken: its place's names, its region's, its country's ([placeWords]). */
+        const val PLACE = "place"
+
+        /** The fields searched: thumbsup2's, then [PLACE]. */
+        val FIELDS = HybridSearch.FIELDS + PLACE
+
         /**
          * Cosine similarity a result found by meaning alone must reach. With MiniLM, captions
          * related to a query score about 0.3-0.6 and unrelated ones about 0.1.
@@ -220,6 +242,8 @@ open class SearchService(
             mix(s.relativePath)
             mix(s.describedAt?.toString())
             mix(s.textHash)
+            mix(s.lat?.toString())
+            mix(s.lon?.toString())
             return h
         }
     }

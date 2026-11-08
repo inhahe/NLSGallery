@@ -34,3 +34,6 @@ __pycache__/
 
 # Official weight files for the desktop tests and phone pushes (tools/fetch_weights.py)
 /tools/weights/
+
+# GeoNames dumps (tools/make_places.py reads them; download as tools/README.md says)
+/tools/geonames/

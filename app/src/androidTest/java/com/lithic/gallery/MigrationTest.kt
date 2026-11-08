@@ -35,25 +35,38 @@ class MigrationTest {
             assertThat(c.getInt(2)).isEqualTo(0)
             assertThat(c.isNull(3)).isTrue()
         }
+        // No location read yet: every file's is read after the update.
+        db.query("SELECT COUNT(*) FROM locations").use { c ->
+            assertThat(c.moveToFirst()).isTrue()
+            assertThat(c.getInt(0)).isEqualTo(0)
+        }
     }
 
-    private val all = arrayOf(GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4)
+    private val all = arrayOf(
+        GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4, GalleryDatabase.MIGRATION_4_5,
+    )
 
     @Test
     fun fromVersion1() {
         helper.createDatabase(name, 1).use(::insertDescription)
-        helper.runMigrationsAndValidate(name, 4, true, *all).use(::assertKept)
+        helper.runMigrationsAndValidate(name, 5, true, *all).use(::assertKept)
     }
 
     @Test
     fun fromVersion2() {
         helper.createDatabase(name, 2).use(::insertDescription)
-        helper.runMigrationsAndValidate(name, 4, true, *all).use(::assertKept)
+        helper.runMigrationsAndValidate(name, 5, true, *all).use(::assertKept)
     }
 
     @Test
     fun fromVersion3() {
         helper.createDatabase(name, 3).use(::insertDescription)
-        helper.runMigrationsAndValidate(name, 4, true, *all).use(::assertKept)
+        helper.runMigrationsAndValidate(name, 5, true, *all).use(::assertKept)
+    }
+
+    @Test
+    fun fromVersion4() {
+        helper.createDatabase(name, 4).use(::insertDescription)
+        helper.runMigrationsAndValidate(name, 5, true, *all).use(::assertKept)
     }
 }

@@ -12,17 +12,20 @@ import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
 import com.lithic.gallery.core.search.DatePhrases
-import com.lithic.gallery.core.search.HybridSearch
+import com.lithic.gallery.core.search.PlacePhrases
 import com.lithic.gallery.core.search.QueryRequest
 import com.lithic.gallery.data.Categories
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
+import com.lithic.gallery.data.MediaLocations
+import com.lithic.gallery.search.Places
 import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.work.Work
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -47,11 +50,17 @@ import java.util.Locale
 data class SearchHit(val item: MediaEntity, val result: SearchService.Result?)
 
 /**
- * A search query as read: [text] as typed, the [date] read in it, the [words] to search for (the
- * query itself unless a date or a request was taken out; empty when nothing is left, and every
- * file allowed is listed), [videosOnly] when it asks for videos.
+ * A search query as read: [text] as typed, the [date] and [place] read in it, the [words] to
+ * search for (the query itself unless a date, a place or a request was taken out; empty when
+ * nothing is left, and every file allowed is listed), [videosOnly] when it asks for videos.
  */
-data class SearchReading(val text: String, val date: DatePhrases.DateQuery?, val words: String, val videosOnly: Boolean)
+data class SearchReading(
+    val text: String,
+    val date: DatePhrases.DateQuery?,
+    val place: PlacePhrases.PlaceQuery?,
+    val words: String,
+    val videosOnly: Boolean,
+)
 
 /** What the AI button shows. */
 data class AiStatus(
@@ -122,6 +131,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     private val dateDismissed = MutableStateFlow<String?>(null)
 
+    /** The same for the place read in it. */
+    private val placeDismissed = MutableStateFlow<String?>(null)
+
     /** The query once it has settled for a moment: what is read and searched. */
     private val settledQuery: StateFlow<String> = query.debounce(250).stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
@@ -132,21 +144,30 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     private val today = MutableStateFlow(LocalDate.now())
 
-    /** The settled query as read: its date unless dismissed, and its request ("show me videos of"). */
-    val reading: StateFlow<SearchReading> =
-        combine(settledQuery, dateDismissed, today) { q, dismissed, day -> Triple(q, q.isNotBlank() && q == dismissed, day) }
-            .distinctUntilChanged()
-            .map { (q, dismissed, _) -> read(q, dismissed) }
-            .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, SearchReading("", null, "", false))
+    /** What a query is read with: whether its date and its place were dismissed, the day, the places known. */
+    private data class ReadingInput(val q: String, val dateOff: Boolean, val placeOff: Boolean, val day: LocalDate, val known: Map<String, String>)
 
-    /** What [q] asks for: the date read in it (none when [dismissed]), the words to search for, the kind. */
-    private fun read(q: String, dismissed: Boolean): SearchReading {
-        if (q.isBlank()) return SearchReading(q, null, "", false)
-        val date = if (dismissed) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q)
-        if (date != null) return SearchReading(q, date, date.text, date.videosOnly)
-        val stripped = QueryRequest.strip(q)
-        return SearchReading(q, null, stripped.text, stripped.videosOnly)
+    /** The settled query as read: its date and place unless dismissed, and its request ("show me videos of"). */
+    val reading: StateFlow<SearchReading> =
+        combine(settledQuery, dateDismissed, placeDismissed, today, app.places.snapshot.map { it.labels }) { q, dd, pd, day, known ->
+            ReadingInput(q, q.isNotBlank() && q == dd, q.isNotBlank() && q == pd, day, known)
+        }
+            .distinctUntilChanged()
+            .map { read(it) }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, SearchReading("", null, null, "", false))
+
+    /**
+     * What a query asks for: the date read in it, then the place (among the places the library
+     * has pictures from) in what is left, the words to search for, the kind.
+     */
+    private fun read(r: ReadingInput): SearchReading {
+        val q = r.q
+        if (q.isBlank()) return SearchReading(q, null, null, "", false)
+        val date = if (r.dateOff) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q)
+        val (rest, videosOnly) = date?.let { it.text to it.videosOnly } ?: QueryRequest.strip(q).let { it.text to it.videosOnly }
+        val place = if (r.placeOff) null else PlacePhrases.parse(rest, r.known)
+        return SearchReading(q, date, place, place?.text ?: rest, videosOnly)
     }
 
     /**
@@ -158,6 +179,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (shown == settledQuery.value) dateDismissed.value = shown
     }
 
+    /** The same for the place shown. */
+    fun dismissPlace() {
+        val shown = reading.value.text
+        if (shown == settledQuery.value) placeDismissed.value = shown
+    }
+
     /** The tab a search is kept to: the one shown, with "Only in this tab" on, unless it is All. */
     val searchScope: StateFlow<Category?> = combine(settings, category) { s, c ->
         c.takeIf { s.searchCurrentTabOnly && it != Category.ALL }
@@ -165,7 +192,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         // A dismissal lasts until the settled query changes.
-        viewModelScope.launch { settledQuery.collect { q -> if (q != dateDismissed.value) dateDismissed.value = null } }
+        viewModelScope.launch {
+            settledQuery.collect { q ->
+                if (q != dateDismissed.value) dateDismissed.value = null
+                if (q != placeDismissed.value) placeDismissed.value = null
+            }
+        }
         viewModelScope.launch {
             while (true) {
                 val midnight = LocalDate.now().plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -183,21 +215,27 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Results for [query] (null when not searching), best first. A change to the files (added,
-     * removed, renamed, moved) invalidates the index here, before the search it reruns.
+     * removed, renamed, moved) or to where they were taken invalidates the index here, before
+     * the search it reruns.
      *
-     * A date in the query narrows the search to the files taken then, "videos" to videos, "Only
-     * in this tab" to the tab. With no words left to search for ("last summer", "show me
-     * videos"), every file allowed is listed, newest first, which needs no descriptions.
+     * A date in the query narrows the search to the files taken then, a place to those taken
+     * there, "videos" to videos, "Only in this tab" to the tab. With no words left to search for
+     * ("last summer", "in paris", "show me videos"), every file allowed is listed, newest first,
+     * which needs no descriptions.
      */
     val searchResults: StateFlow<List<SearchHit>?> =
-        combine(reading, settings, searchScope, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, tab, all, _ ->
-            SearchInput(q, s, tab, all)
+        combine(
+            reading, settings, searchScope, allMedia.onEach { app.search.invalidate() },
+            combine(indexVersion, app.places.snapshot.onEach { app.search.invalidate() }) { _, places -> places },
+        ) { q, s, tab, all, places ->
+            SearchInput(q, s, tab, all, places)
         }.mapLatest { input ->
             val q = input.query
             if (q.text.isBlank()) return@mapLatest null
             val s = input.settings
             val zone = ZoneId.systemDefault()
             val dates = q.date?.filter
+            val there = q.place?.let { input.places.keys[it.key].orEmpty() }
             val tab = input.tab
             // The files the search may find, worked out once: the search asks per candidate,
             // holding its index's lock. It also keeps out files the index has and this list has
@@ -205,16 +243,23 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val allowed = input.all.filter { item ->
                 (tab == null || Categories.shows(tab, item.folderCategory, item.isVideo, s.videosInFolderTabs)) &&
                     (!q.videosOnly || item.isVideo) &&
+                    (there == null || item.aiKey in there) &&
                     (dates == null || dates.matches(Instant.ofEpochMilli(item.sortDate).atZone(zone).toLocalDate()))
             }
             if (q.words.isBlank()) return@mapLatest allowed.map { SearchHit(it, null) }
             val byId = allowed.associateBy { it.id }
-            val fields = HybridSearch.FIELDS.filter { it in s.searchFields }
+            val fields = SearchService.FIELDS.filter { it in s.searchFields }
             app.search.search(q.words, fields) { id -> id in byId }
                 .mapNotNull { r -> byId[r.mediaId]?.let { SearchHit(it, r) } }
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private data class SearchInput(val query: SearchReading, val settings: Settings, val tab: Category?, val all: List<MediaEntity>)
+    private data class SearchInput(
+        val query: SearchReading,
+        val settings: Settings,
+        val tab: Category?,
+        val all: List<MediaEntity>,
+        val places: Places.Snapshot,
+    )
 
     val aiStatus: StateFlow<AiStatus> = combine(
         settings.flatMapLatest { s -> app.db.ai().observeUndescribedCount(s.describeVideos, s.captions, s.ocr) },
@@ -321,6 +366,24 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private var started = false
 
+    /** Asks for the files' locations to be read (one reading at a time, at most one more waiting). */
+    private val scans = Channel<Unit>(Channel.CONFLATED)
+
+    /** Where the library's files were taken, as far as their locations are read. */
+    val places: StateFlow<Places.Snapshot> = app.places.snapshot
+
+    /** Whether the app may read where photos were taken. */
+    fun locationsAllowed(): Boolean = MediaLocations.allowed(app)
+
+    /** The settings as stored ([settings] starts out with the defaults until they are read). */
+    suspend fun storedSettings(): Settings = app.settings.current()
+
+    /** The permission to read locations was answered: read them, if it was given. */
+    fun onLocationAnswer() {
+        viewModelScope.launch { app.settings.update { it.copy(locationAsked = true) } }
+        scans.trySend(Unit)
+    }
+
     /** Called once access to the media has been granted. */
     fun start() {
         if (started) return
@@ -328,6 +391,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             // The library first: checking copied models can take a while.
             app.repository.sync()
+            scans.trySend(Unit)
             app.models.verifyCopied()
             val s = app.settings.current()
             Work.watchNewMedia(app, s.describeNewMedia)
@@ -335,8 +399,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
         // MediaStore changes while the app is open: resync shortly after they settle.
         viewModelScope.launch {
-            app.repository.changes().debounce(1000).collect { app.repository.sync() }
+            app.repository.changes().debounce(1000).collect {
+                app.repository.sync()
+                scans.trySend(Unit)
+            }
         }
+        // Where new files were taken, read beside the rest (a large library's first reading
+        // takes a while).
+        viewModelScope.launch(Dispatchers.IO) { for (unit in scans) app.places.scan() }
         // Descriptions changed: the next search updates the index first, and an open one is
         // rerun, at most every 5 s while photos are being described. (File changes rerun it
         // through searchResults.)
@@ -359,6 +429,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun onResume() {
         today.value = LocalDate.now()
         if (!started) return
+        // The permission may have been given in the system's settings meanwhile.
+        scans.trySend(Unit)
         viewModelScope.launch {
             app.models.verifyCopied()
             val s = app.settings.current()

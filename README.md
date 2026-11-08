@@ -46,17 +46,17 @@ their orientation. Drag the bar on the right edge to move through years quickly.
 
 **Long-press a thumbnail** for its file name and folder, and to open, share, delete (to the
 trash, where Android keeps it 30 days), edit or open it in another app, or copy its name; below
-are its date, size and what the AI made of it.
+are its date, where it was taken, its size and what the AI made of it.
 
 Tap a thumbnail to view it full screen: swipe between pictures, pinch or double-tap to zoom,
-tap a video to play it. The top bar has details (date, file, size, the AI description and the
-text found in the picture), share, move to trash, and Edit / Open with another app.
+tap a video to play it. The top bar has details (date, place, file, size, the AI description and
+the text found in the picture), share, move to trash, and Edit / Open with another app.
 
 ## AI descriptions and search
 
 Type in the search field to find pictures by what is in them ("dog on a beach", "receipt",
 "birthday cake"), by text visible in them (signs, screenshots, documents), by their own
-caption, file name or folder. Search finds matching words, also with typos and word starts, and
+caption, file name or folder, and by where they were taken. Search finds matching words, also with typos and word starts, and
 pictures whose description *means* what you typed even with different words; the two are
 blended as in thumbsup2. A dot on a thumbnail marks a result found by meaning alone. Chips under
 the search field choose where to look, and can limit results to the current tab.
@@ -75,6 +75,22 @@ words instead. Seasons follow the phone's region (turned round in the southern h
 start on its first day of the week, and 3/5/2024 is read in its order. Words that are also
 ordinary words are dates only when something says so: "christmas tree" looks for Christmas
 trees, "last christmas" for pictures from last Christmas, and "may" alone is never a date.
+
+**Places.** Say where: "beach in hawaii", "paris", "photos from japan", "trip to rome last
+summer", "sunset in honolulu". Photos and videos keep where they were taken (their GPS), which
+NLSGallery turns into the town, the big city near it, the state or province and the country, so
+any of those names finds them, and countries also by everyday names ("usa", "uk", "holland").
+The search then looks only among the pictures taken there; a place on its own lists them all. A
+chip shows the place it was taken to be ("Hawaii, United States"); tap it to search for those
+words instead. Only places the library has pictures from count, and a name that is also an
+ordinary word ("nice", "reading") is a place only after "in", "at", "near", "from", "to" or
+"around", or on its own: "nice beach" looks for nice beaches. Without those words a place still
+finds its pictures as a matching word ("Place" chip), among the other words. Android hides where
+pictures were taken unless the app is allowed to read it, which it asks once (Settings → Search
+→ *Places* asks again, and says how many pictures say where they were taken); taking the
+permission away in Android's settings makes NLSGallery forget what it read. Pictures with no
+location (screenshots, downloads, a camera with location off) are not found by place. The
+long-press details show each picture's place.
 
 ### Setting up
 
@@ -158,3 +174,8 @@ To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -st
 
 `gradlew :core:test` compares the on-device pipeline with thumbsup2's output (see
 `tools/README.md` for the test data and weights it needs). `design.md` describes how it works.
+
+## Credits
+
+Place names are from [GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII`,
+`countryInfo`), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

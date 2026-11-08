@@ -105,7 +105,7 @@ private val mediaPermissions: Array<String> = when {
         Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.POST_NOTIFICATIONS,
     )
     else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-}
+} + Manifest.permission.ACCESS_MEDIA_LOCATION
 
 private sealed interface Route {
     data object Gallery : Route
@@ -118,20 +118,30 @@ private sealed interface Route {
 private fun AppRoot(vm: GalleryViewModel) {
     val context = LocalContext.current
     var access by remember { mutableStateOf(mediaAccess(context)) }
+    // Whether where photos were taken was asked for along with them, this time.
+    var locationAsked by rememberSaveable { mutableStateOf(false) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         access = mediaAccess(context)
+        vm.onLocationAnswer()
     }
+    val askLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.onLocationAnswer() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         access = mediaAccess(context)
         vm.onResume()
     }
     if (access != Access.FULL) {
-        PermissionScreen(access, onRequest = { launcher.launch(mediaPermissions) }, onOpenSettings = {
+        PermissionScreen(access, onRequest = { locationAsked = true; launcher.launch(mediaPermissions) }, onOpenSettings = {
             context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
         })
         return
     }
-    LaunchedEffect(Unit) { vm.start() }
+    LaunchedEffect(Unit) {
+        vm.start()
+        // Access given before the app asked for locations too (an update): ask once by itself.
+        if (!locationAsked && !vm.locationsAllowed() && !vm.storedSettings().locationAsked) {
+            askLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+        }
+    }
 
     var routeName by rememberSaveable { mutableStateOf("gallery") }
     var viewerIndex by rememberSaveable { mutableIntStateOf(0) }

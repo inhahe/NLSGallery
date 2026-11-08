@@ -32,6 +32,7 @@ Without thumbsup2's environment, `requirements.txt` here lists what to install f
 | `export_models.py [--craft-half]` | thumbsup2's + onnx | `app/src/main/assets/models/`: the graphs, `models.json`, `vocab.txt`; checks each against PyTorch. `--craft-half` makes only `craft_fp16.onnx` (the GPU's float16 detector) from the `craft.onnx` already there |
 | `fetch_weights.py` | any | `weights/`: the official weight files (copied from thumbsup2's caches in WSL, or downloaded), SHA-256 checked |
 | `push-test-data.bat [emulator]` | | the test images (files and PIL's pixels) and references onto the phone or the emulator, for the on-device tests |
+| `make_places.py` | any | `app/src/main/assets/places.bin`: the gazetteer place search reads (GeoNames' places of 1000 people or more, their regions and countries, a few everyday country names), from `geonames/cities1000.zip`, `admin1CodesASCII.txt` and `countryInfo.txt` downloaded from https://download.geonames.org/export/dump/ (CC BY 4.0; `geonames/` is not in git). Run it again to take in GeoNames' changes |
 
 `testdata/` and `weights/` (~1.2 GB) are not in git; delete them when not testing.
 

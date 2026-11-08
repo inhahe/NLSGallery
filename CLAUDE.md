@@ -25,7 +25,8 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   The model tests take a few minutes; `CraftTilingTest` longer.
 - `gradlew :app:testDebugUnitTest`: category rules, caption text, model-failure blame, and
   (Robolectric, Room in memory) the search index kept up to date against one built afresh,
-  descriptions and embeddings kept together, copied model files checked.
+  descriptions and embeddings kept together, copied model files checked, places named from
+  locations (and forgotten with the permission).
 - On a phone: `tools\push-test-data.bat` (`emulator` for the emulator), `push-models.bat debug`,
   then run `OnDeviceModelTest` / `OnDeviceBenchmark` / `DescribeFailureTest` /
   `MediaDecodingDeviceTest` / `MigrationTest` (the last three also on the emulator, whose debug

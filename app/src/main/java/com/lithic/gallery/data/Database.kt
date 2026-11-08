@@ -132,6 +132,21 @@ data class SearchSignature(
     val relativePath: String,
     val describedAt: Long?,
     val textHash: String?,
+    /** Where it was taken, once read ([LocationEntity]): a file located since is indexed again. */
+    val lat: Double?,
+    val lon: Double?,
+)
+
+/**
+ * Where a file was taken, from its EXIF GPS or a video's location, by its AI key (so a moved file
+ * keeps it): [lat] and [lon] in degrees, both null when it says nowhere (or the phone withholds it).
+ * A file with no row has not been read yet.
+ */
+@Entity(tableName = "locations")
+data class LocationEntity(
+    @PrimaryKey val hash: String,
+    val lat: Double?,
+    val lon: Double?,
 )
 
 /** A media item joined to its description (null parts: not described). */
@@ -145,6 +160,8 @@ data class MediaWithDescription(
     val caption: String?,
     val ocr: String?,
     val manualCaption: String?,
+    val lat: Double?,
+    val lon: Double?,
 )
 
 @Dao
@@ -166,6 +183,24 @@ interface MediaDao {
 
     @Upsert
     suspend fun upsertAspect(a: DisplayAspectEntity)
+
+    /** Files whose location has not been read ([LocationEntity]), newest first. */
+    @Query(
+        """SELECT m.* FROM media m LEFT JOIN locations l ON l.hash = m.aiKey
+           WHERE l.hash IS NULL ORDER BY m.sortDate DESC, m.id DESC"""
+    )
+    suspend fun withoutLocation(): List<MediaEntity>
+
+    @Upsert
+    suspend fun upsertLocations(list: List<LocationEntity>)
+
+    /** Forgets every location read (the permission to read them was taken back); how many there were. */
+    @Query("DELETE FROM locations")
+    suspend fun forgetLocations(): Int
+
+    /** Every location read that says somewhere. */
+    @Query("SELECT * FROM locations WHERE lat IS NOT NULL AND lon IS NOT NULL")
+    suspend fun locations(): List<LocationEntity>
 }
 
 @Dao
@@ -324,24 +359,27 @@ interface AiDao {
 
     @Query(
         """SELECT m.id, m.displayName, m.relativePath, m.sortDate, m.isVideo, m.aiKey,
-                  d.caption, d.ocr, d.manualCaption
-           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey"""
+                  d.caption, d.ocr, d.manualCaption, l.lat, l.lon
+           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
+           LEFT JOIN locations l ON l.hash = m.aiKey"""
     )
     suspend fun searchable(): List<MediaWithDescription>
 
     /** [searchable] for media [ids] (at most 900 at a time). */
     @Query(
         """SELECT m.id, m.displayName, m.relativePath, m.sortDate, m.isVideo, m.aiKey,
-                  d.caption, d.ocr, d.manualCaption
-           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey WHERE m.id IN (:ids)"""
+                  d.caption, d.ocr, d.manualCaption, l.lat, l.lon
+           FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
+           LEFT JOIN locations l ON l.hash = m.aiKey WHERE m.id IN (:ids)"""
     )
     suspend fun searchable(ids: List<Long>): List<MediaWithDescription>
 
     /** Every file's [SearchSignature], with the text hash of its [model] embedding. */
     @Query(
-        """SELECT m.id, m.aiKey, m.sortDate, m.displayName, m.relativePath, d.describedAt, e.textHash
+        """SELECT m.id, m.aiKey, m.sortDate, m.displayName, m.relativePath, d.describedAt, e.textHash, l.lat, l.lon
            FROM media m LEFT JOIN ai_descriptions d ON d.hash = m.aiKey
-           LEFT JOIN ai_embeddings e ON e.hash = m.aiKey AND e.model = :model"""
+           LEFT JOIN ai_embeddings e ON e.hash = m.aiKey AND e.model = :model
+           LEFT JOIN locations l ON l.hash = m.aiKey"""
     )
     suspend fun searchSignatures(model: String): List<SearchSignature>
 
@@ -380,8 +418,8 @@ interface AiDao {
 }
 
 @Database(
-    entities = [MediaEntity::class, DescriptionEntity::class, EmbeddingEntity::class, DisplayAspectEntity::class],
-    version = 4,
+    entities = [MediaEntity::class, DescriptionEntity::class, EmbeddingEntity::class, DisplayAspectEntity::class, LocationEntity::class],
+    version = 5,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -391,7 +429,7 @@ abstract class GalleryDatabase : RoomDatabase() {
     companion object {
         fun open(context: Context): GalleryDatabase =
             Room.databaseBuilder(context, GalleryDatabase::class.java, "gallery.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
 
         /** 2 learns displayed aspect ratios from thumbnails ([DisplayAspectEntity]). */
@@ -415,6 +453,15 @@ abstract class GalleryDatabase : RoomDatabase() {
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `ai_descriptions` ADD COLUMN `lastModelFailure` INTEGER")
+            }
+        }
+
+        /** 5 keeps where each file was taken ([LocationEntity]). */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `locations` (`hash` TEXT NOT NULL, `lat` REAL, `lon` REAL, PRIMARY KEY(`hash`))"
+                )
             }
         }
     }

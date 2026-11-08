@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Screenshot
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Videocam
@@ -88,6 +89,7 @@ import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.LayoutMode
+import com.lithic.gallery.search.SearchService
 import kotlin.math.roundToInt
 
 fun Category.label(): String = when (this) {
@@ -116,6 +118,7 @@ private val FIELD_LABELS = mapOf(
     HybridSearch.CAPTION to "Own caption",
     HybridSearch.FILENAME to "File name",
     HybridSearch.PATH to "Folder",
+    SearchService.PLACE to "Place",
 )
 
 /** The tabs, the thumbnails, search, and the AI button. */
@@ -231,7 +234,8 @@ fun GalleryScreen(
             }
             CategoryTabs(tabs, category, onSelect = vm::selectCategory)
             if (hits != null) {
-                searchDate?.let { date -> DateChip(date.filter.label, onDismiss = vm::dismissDate) }
+                searchDate?.let { date -> ReadChip(date.filter.label, Icons.Outlined.DateRange, onDismiss = vm::dismissDate) }
+                reading.place?.let { place -> ReadChip(place.label, Icons.Outlined.Place, onDismiss = vm::dismissPlace) }
                 SearchChips(
                     words = reading.words.isNotEmpty(),
                     fields = settings.searchFields,
@@ -445,7 +449,7 @@ private fun SearchChips(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            if (words) for (f in HybridSearch.FIELDS) {
+            if (words) for (f in SearchService.FIELDS) {
                 FilterChip(selected = f in fields, onClick = { onToggle(f) }, label = { Text(FIELD_LABELS.getValue(f), fontSize = 12.sp) })
             }
             // In the All tab there is nothing to keep a search to.
@@ -462,14 +466,17 @@ private fun SearchChips(
     }
 }
 
-/** The date read in the query ([label]: what it was taken to mean); × searches for its words instead. */
+/**
+ * A date or a place read in the query ([label]: what it was taken to mean, beside its [icon]);
+ * × searches for its words instead.
+ */
 @Composable
-private fun DateChip(label: String, onDismiss: () -> Unit) {
+private fun ReadChip(label: String, icon: ImageVector, onDismiss: () -> Unit) {
     InputChip(
         selected = true,
         onClick = onDismiss,
         label = { Text(label, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        leadingIcon = { Icon(Icons.Outlined.DateRange, contentDescription = null, Modifier.size(18.dp)) },
+        leadingIcon = { Icon(icon, contentDescription = null, Modifier.size(18.dp)) },
         trailingIcon = { Icon(Icons.Outlined.Close, contentDescription = "Search for these words instead", Modifier.size(18.dp)) },
         modifier = Modifier.padding(horizontal = 8.dp),
     )
@@ -545,12 +552,13 @@ private fun NoResults(r: SearchReading, tab: Category?, ai: AiStatus, modifier: 
 /** What an empty search says: what was looked for ([r]), where ([tab]: kept to it). */
 private fun noResults(r: SearchReading, tab: Category?): String {
     val inTab = tab?.takeIf { !(r.videosOnly && it == Category.VIDEO) }?.let { " in ${it.label()}" } ?: ""
+    // The chips above say when and where.
+    val read = listOfNotNull("then".takeIf { r.date != null }, "there".takeIf { r.place != null }).joinToString(" and ")
     return when {
-        // The chip above says when.
-        r.words.isEmpty() && r.date != null -> if (r.videosOnly) "No videos$inTab were taken then."
-            else if (tab != null) "Nothing$inTab was taken then." else "No photos or videos were taken then."
+        r.words.isEmpty() && read.isNotEmpty() -> if (r.videosOnly) "No videos$inTab were taken $read."
+            else if (tab != null) "Nothing$inTab was taken $read." else "No photos or videos were taken $read."
         r.words.isEmpty() -> if (r.videosOnly) "No videos$inTab." else "Nothing$inTab."
-        r.date != null -> if (r.videosOnly) "No videos taken then match “${r.words}”." else "Nothing taken then matches “${r.words}”."
+        read.isNotEmpty() -> if (r.videosOnly) "No videos taken $read match “${r.words}”." else "Nothing taken $read matches “${r.words}”."
         r.videosOnly -> "No videos match “${r.words}”."
         else -> "Nothing matches “${r.text}”."
     }

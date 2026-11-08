@@ -11,9 +11,11 @@ import coil3.SingletonImageLoader
 import coil3.memory.MemoryCache
 import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.ai.ModelManager
+import com.lithic.gallery.core.places.Gazetteer
 import com.lithic.gallery.data.GalleryDatabase
 import com.lithic.gallery.data.MediaRepository
 import com.lithic.gallery.data.SettingsStore
+import com.lithic.gallery.search.Places
 import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.ui.MediaThumbFetcher
 import com.lithic.gallery.ui.MediaThumbKeyer
@@ -37,7 +39,17 @@ class GalleryApp : Application(), SingletonImageLoader.Factory {
     val repository: MediaRepository by lazy { MediaRepository(db, contentResolver) }
     val models: ModelManager by lazy { ModelManager(this) }
     val ai: AiEngine by lazy { AiEngine(this, models, db.ai()) }
-    val search: SearchService by lazy { SearchService(db.ai(), models, { ai.tokenizer }) { ai.allowed(settings.current()) } }
+    val search: SearchService by lazy {
+        SearchService(
+            db.ai(), models, { ai.tokenizer },
+            meaningAllowed = { ai.allowed(settings.current()) },
+            placeWords = { lat, lon -> gazetteer.place(lat, lon)?.let(gazetteer::words) },
+        )
+    }
+
+    /** The world's places (about 15 MB in memory): read when a file is first found to say where it was taken. */
+    val gazetteer: Gazetteer by lazy { Gazetteer(assets.open("places.bin").use { it.readBytes() }) }
+    val places: Places by lazy { Places(this, db.media(), { gazetteer }) }
 
     override fun onCreate() {
         super.onCreate()

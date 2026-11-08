@@ -55,6 +55,9 @@ Deliberate differences from thumbsup2:
 - **Videos are described**: BLIP captions frames at 10%, 50% and 90% (distinct captions joined
   with "; "), EasyOCR reads the middle frame. thumbsup2 describes images only.
 - **Photos over ~16.8 MP are decoded subsampled** (by powers of two) to bound memory.
+- **Search by place** (a sixth keyword field, `place`, and a filter): thumbsup2 has neither.
+  Its five fields score as they did; a query that names no place gives thumbsup2's ranking
+  whenever the place field is off or matches nothing.
 - **Text detail** (`TextDetail`): EasyOCR's detector works at up to 2560 px (its default, so
   thumbsup2's). On the phone (Snapdragon 8 Gen 1) CRAFT takes 8.5 s at 1280×960, 22 s at
   1920×1440 and 52 s at 2560×1920, so the default "Balanced" keeps 2560 for screenshots,
@@ -138,7 +141,7 @@ ships in assets.
   name: screenshots, messaging apps, downloads, camera, other) and an `aiKey` =
   sha1(name, size, mtime), so moved files keep their descriptions (thumbsup2 keys its cache the
   same way).
-- Room (`Database.kt`, version 4; migrations kept and tested from every version
+- Room (`Database.kt`, version 5; migrations kept and tested from every version
   (`MigrationTest` on the device, the schemas in `app/schemas` its assets)): `media` (the
   library copy), `display_aspect` (learned aspect ratios), `ai_descriptions` (keyed by `aiKey`;
   caption/ocr nullable per part; `error` marks a file that opened but could not be decoded, ran
@@ -148,7 +151,9 @@ ships in assets.
   search index relies on), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded).
   A description and its embedding are written in one transaction (`saveDescribed`), reset in
   one (`forget`, and "Retry failed", `clearFailures`), and an embedding made later is saved
-  only over the text it was made from (`saveEmbeddingIfCurrent`).
+  only over the text it was made from (`saveEmbeddingIfCurrent`). `locations` (by `aiKey`:
+  where the file was taken, latitude and longitude, both null when it says nowhere; no row
+  until it is read; version 5).
 - `MediaRepository.sync()` diffs MediaStore against the table (upsert changed, delete gone);
   run at start, on MediaStore change notifications (debounced) while open, and by the workers.
 - `SettingsStore`: DataStore preferences, one `Settings` value.
@@ -247,11 +252,12 @@ synced) and `MediaDetails`.
 - `MediaDecoding`: `ImageDecoder` (EXIF orientation applied, software bitmap, unpremultiplied,
   subsampled above 16.8 MP) to `RgbImage` in strips, stored values (see above); video frames by
   `MediaMetadataRetriever.getScaledFrameAtTime`.
-- `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's) plus the embeddings,
+- `SearchService`: a `MiniSearch` over all files (fields as thumbsup2's, then `place`: the
+  words of where it was taken, `Gazetteer.words`) plus the embeddings,
   brought up to date by the first search after files or descriptions change (an open search
   reruns at most every 5 s while describing changes them every couple of seconds). A refresh
   reads every file's `SearchSignature` (key, name, folder, when its description was written,
-  which text its embedding is of: a few dozen bytes), compares a 64-bit hash of it with what
+  which text its embedding is of, its location: a few dozen bytes), compares a 64-bit hash of it with what
   it indexed, and reads text and embeddings only for the files that changed. A write during
   the reads changes the signature again, so the next refresh mends what this one read in
   between. Refreshes run one at a time in the service's own scope (a search cancelled by the
@@ -313,6 +319,32 @@ synced) and `MediaDetails`.
   The filter's label ("summer 2026: Jun 1, 2026 – Aug 31, 2026") shows as a chip above the
   results; its × searches the query as words instead (`GalleryViewModel.dismissDate`, until the
   query changes).
+- **Places.** Where each file was taken is read once (`Places.scan`, in the background after
+  every sync, newest first, 100 files per write; `MediaLocations`: a photo's EXIF GPS through
+  `ExifInterface`, a video's ISO 6709 location tag; both need ACCESS_MEDIA_LOCATION and
+  `MediaStore.setRequireOriginal`, without which Android blanks them, so nothing is read
+  without it, and a scan without it forgets the locations read before: the user has withheld
+  them; 0,0 is a GPS without a fix). `core/places/Gazetteer` turns a point into words:
+  the nearest of GeoNames' places of 1000 people or more within 60 km (`places.bin`, 171,749
+  places, 5.4 MB, `tools/make_places.py`; a 1° grid, so a look-up reads a few hundred), its
+  admin1 region and country, and the most populous place within 30 km when it has 100,000
+  people or more (a suburb's pictures are its city's: Boulogne-Billancourt's are Paris's). The
+  gazetteer is read (about 15 MB) only once a file says where it was taken. `Places.snapshot`
+  holds each located file's place, and every name (normalized: lower case, accents and
+  punctuation gone) to the files taken there and to a label: the place, the city, the region,
+  the country, and the country's other names ("usa", "uk", "holland") where the library has
+  pictures from it; two places of one name read as the name. It is rebuilt every 10 s while a
+  large library is read, and the search index is invalidated with it. A query's place
+  (`core/search/PlacePhrases`) is read after its date and request, in what is left, among the
+  names the library has: the longest name (up to five words) that follows "in", "at", "near",
+  "from", "around", "to" or "visiting" (determiners between), or is the whole of what is left;
+  so "nice beach" is not Nice. It becomes a filter on the files taken there, with a chip and a
+  × (`dismissPlace`) as the date's. Without such a word a place's name still matches the
+  `place` field as a word. Settings → Search → *Places* shows whether the permission is given
+  and how many files say where; the app asks for it with the media permissions, once by itself
+  after an update (`Settings.locationAsked`), and again from there (the app's system settings
+  once Android no longer asks). The search fields chosen are saved with the fields there were
+  (`search_fields_known`), so a field added since starts out searched (`searchFieldsFrom`).
 
 ### Hardware
 
@@ -416,7 +448,8 @@ the background, and then it runs as a normal job (10-minute limit, resumed by th
 ### Permissions
 
 READ_MEDIA_IMAGES/VIDEO (READ_EXTERNAL_STORAGE ≤ 32); READ_MEDIA_VISUAL_USER_SELECTED declared
-so a "selected photos" grant is detected and the app asks for full access; POST_NOTIFICATIONS;
+so a "selected photos" grant is detected and the app asks for full access; ACCESS_MEDIA_LOCATION
+(where pictures were taken, for search by place); POST_NOTIFICATIONS;
 INTERNET (model download); FOREGROUND_SERVICE_DATA_SYNC / MEDIA_PROCESSING.
 
 ## Build

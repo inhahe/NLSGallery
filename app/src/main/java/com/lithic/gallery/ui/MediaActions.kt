@@ -189,11 +189,13 @@ fun MediaDetails(item: MediaEntity, hit: SearchService.Result?, vm: GalleryViewM
     val context = LocalContext.current
     val d by remember(item.aiKey) { vm.description(item) }.collectAsState(null)
     val ai by vm.aiStatus.collectAsState()
+    val places by vm.places.collectAsState()
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp)) {
         SelectionContainer {
             Column {
                 Field("Taken", DateFormat.getLongDateFormat(context).format(Date(item.sortDate)) + ", " +
                     DateFormat.getTimeFormat(context).format(Date(item.sortDate)))
+                places.placeOf[item.aiKey]?.let { Field("Place", it.label) }
                 Field("File", item.displayName)
                 Field("Folder", item.relativePath.ifEmpty { "/" })
                 Field("Size", Formatter.formatFileSize(context, item.size) +

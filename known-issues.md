@@ -15,6 +15,10 @@ What the app does not do, by design or for want of something it would need.
   China's for the Lunar New Year), and the span reaches a day either side for the rest.
 - **Days are the phone's time zone's now**: a picture taken abroad near midnight counts for the
   neighbouring day. MediaStore keeps the moment taken, not the zone it was taken in.
+- **Places are GeoNames' names in English**, of places of 1000 people or more: a beach, a park
+  or a landmark is found by the town, city, region or country around it ("waikiki" is part of
+  Honolulu's), not its own name, and "hawaii" in another language is not read. Places whose name
+  is also an ordinary word need "in", "at", "near"... (`PlacePhrases`).
 - **The GPU was measured on one chip**, the Snapdragon 8 Gen 1 (Adreno 730). Others get the
   same thresholds and memory budgets (`EasyOcr` defaults, `AiEngine.gpuPixels`); a newer Adreno
   is likely faster, an older one could be slower than its CPU at some sizes. A GPU that

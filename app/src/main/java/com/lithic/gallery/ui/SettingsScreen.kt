@@ -1,6 +1,12 @@
 package com.lithic.gallery.ui
 
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,9 +34,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.data.LayoutMode
@@ -137,9 +150,52 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
 
             Section("Search")
             Hint("Search looks in the AI description, the text in the picture, the file's own caption, its name and folder, as " +
-                "thumbsup2's search does: matching words (with typos and word starts) blended with matching meaning. " +
-                "Add when (\"beach last summer\", \"dog 2023\", \"christmas\") to look among the pictures taken then.")
+                "thumbsup2's search does, and in where it was taken: matching words (with typos and word starts) blended " +
+                "with matching meaning. " +
+                "Add when (\"beach last summer\", \"dog 2023\", \"christmas\") to look among the pictures taken then, " +
+                "and where (\"beach in hawaii\", \"paris\") among those taken there.")
+            PlacesRow(vm, s.locationAsked)
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+/**
+ * Whether the app reads where photos were taken, and how many say; a tap asks for the permission
+ * to ([asked]: it was asked for before, so when Android no longer shows the question, the app's
+ * system settings open instead).
+ */
+@Composable
+private fun PlacesRow(vm: GalleryViewModel, asked: Boolean) {
+    val context = LocalContext.current
+    val places by vm.places.collectAsState()
+    var allowed by remember { mutableStateOf(vm.locationsAllowed()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { allowed = vm.locationsAllowed() }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        allowed = granted
+        vm.onLocationAnswer()
+    }
+    val onClick = {
+        val activity = context as? Activity
+        val asksStill = activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.ACCESS_MEDIA_LOCATION)
+        if (asked && !asksStill) {
+            context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
+        } else {
+            ask.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+        }
+    }
+    Row(Modifier.fillMaxWidth().clickable(enabled = !allowed, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text("Places")
+            val n = places.placeOf.size
+            Text(
+                when {
+                    !allowed -> "Android hides where photos were taken: tap to allow the app to read it, to search by place"
+                    n == 0 -> "None of the photos read so far say where they were taken"
+                    else -> "$n photos and videos say where they were taken"
+                },
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
