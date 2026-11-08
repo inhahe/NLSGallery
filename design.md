@@ -295,13 +295,25 @@ synced) and `MediaDetails`.
   Patrick's Day; and from other calendars (`Calendars.kt`, `CalendarsTest` against published
   dates): Diwali, Holi, the Lunar New Year, the Mid-Autumn Festival, Ramadan, Eid al-Fitr and
   Eid al-Adha ("eid" is both), Hanukkah, Passover, Rosh Hashanah, Yom Kippur. Those that follow
-  the moon use its new and full moons (Meeus, Astronomical Algorithms ch. 49: 2024's within a
-  minute of the almanacs): the Lunar New Year is the first new moon from 21 January by China's
-  date, the Mid-Autumn Festival the 15th day of the month holding 23 September, Diwali the new
-  moon ending the month in which the sun enters sidereal Libra (about 17 October), Holi the day
-  after the full moon of the month it enters sidereal Pisces (about 14 March); Islamic months
-  begin as Umm al-Qura's do, the day after a new moon before sunset in Mecca, else the day
-  after that (Ramadan 2022-2025 and both Eids exactly). The Hebrew calendar is its arithmetic
+  the moon use the true moon and sun (`Calendars.kt`; Meeus, Astronomical Algorithms: new and
+  full moons, ch. 49, within a minute of the almanacs; the sun's longitude, ch. 25, to 0.01°;
+  dynamical time to the clock's by ΔT), not dates that stand for them, since a new moon falls
+  between such a date and the true moment once every decade or two and moves a festival a
+  month. The Lunar New Year and the Mid-Autumn Festival (the 15th day of the 8th month) come from
+  the Chinese calendar's own rules (`ChineseCalendar`: months begin on the day of a new moon in
+  China, UTC+8 from 1929 and Beijing's mean time before; the month of the winter solstice is the
+  11th; a year of 13 months leaps its first month without a major solar term, so 2034's comes
+  after a leap 11th month): every year 1900-2099 as the Hong Kong Observatory's tables have it but
+  1978's Mid-Autumn Festival, whose month's new moon came 9 minutes after midnight and was kept a
+  day earlier (its span still holds that day). Diwali is the new moon ending Ashvin, the lunar
+  month in which the sun enters sidereal Libra, Holi the day after the full moon of Phalguna, in
+  which it enters sidereal Pisces: the true ingress, the tropical longitude less the Lahiri
+  ayanamsa (2039's and 2058's Diwali, 1983's and 2002's Holi, against published dates).
+  Islamic months are Saudi Arabia's Umm al-Qura calendar, an official table and not a rule a
+  computation reproduces: its month lengths from 1 Muharram 1365 (5 December 1945) to 1500
+  (2077) are 1632 bits in `UMM_AL_QURA` (`tools/make_umm_al_qura.py`, from hijridate), and
+  outside them the month begins the day after a new moon before 18:30 in Mecca, else the day
+  after that (that rule missed 333 of the table's 1632 months). The Hebrew calendar is its arithmetic
   (Dershowitz and Reingold): Rosh Hashanah, Passover and Hanukkah agree with convertdate for every
   year 1900-2100. Each takes its festival's days, with a day's leeway where countries keep it on
   different days, and the evening before for those that begin at sunset. A Gregorian year can

@@ -12,7 +12,9 @@ What the app does not do, by design or for want of something it would need.
   those listed in `design.md`; others (Navratri, Vesak, Onam, Nowruz...) would each need their
   calendar's rule. Where a lunar holiday's day depends on sighting the moon or on local time, the
   rule is one country's (Umm al-Qura for Islamic months, India's time for Diwali and Holi,
-  China's for the Lunar New Year), and the span reaches a day either side for the rest.
+  China's for the Lunar New Year), and the span reaches a day either side for the rest. Islamic
+  months before December 1945 and after 2077, outside Umm al-Qura's table, are computed and can
+  be a day out.
 - **Days are the phone's time zone's now**: a picture taken abroad near midnight counts for the
   neighbouring day. MediaStore keeps the moment taken, not the zone it was taken in.
 - **Places are GeoNames' names in English**, of places of 1000 people or more: a beach, a park

@@ -180,4 +180,6 @@ To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -st
 ## Credits
 
 Place names are from [GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII`,
-`countryInfo`), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+`countryInfo`), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The
+Umm al-Qura calendar's months (for Ramadan and Eid) are from
+[hijridate](https://github.com/dralshehri/hijridate)'s table (MIT licence).
