@@ -8,6 +8,8 @@ import androidx.work.WorkManager
 import com.lithic.gallery.GalleryApp
 import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
+import com.lithic.gallery.core.search.DatePhrases
+import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.Categories
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
@@ -30,9 +32,13 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.Locale
 
-/** A search result shown in the grid. */
-data class SearchHit(val item: MediaEntity, val result: SearchService.Result)
+/** A search result shown in the grid: how it was found, or no [result] when it was listed for its date alone. */
+data class SearchHit(val item: MediaEntity, val result: SearchService.Result?)
 
 /** What the AI button shows. */
 data class AiStatus(
@@ -92,30 +98,49 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     val query = MutableStateFlow("")
 
+    /** A query whose date phrase is to be searched for as words: the user dismissed the date read in it. */
+    val dateDismissed = MutableStateFlow<String?>(null)
+
+    /** The query (settled for a moment) and the date read in it, unless dismissed. */
+    private val parsedQuery: StateFlow<ParsedQuery> = combine(query.debounce(250), dateDismissed) { q, dismissed ->
+        ParsedQuery(q, if (q.isBlank() || q == dismissed) null else DatePhrases.forLocale(LocalDate.now(), Locale.getDefault()).parse(q))
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ParsedQuery("", null))
+
+    private data class ParsedQuery(val text: String, val date: DatePhrases.DateQuery?)
+
+    /** The date read in the query, for the user to check and dismiss; null when none is. */
+    val searchDate: StateFlow<DatePhrases.DateQuery?> = parsedQuery.map { it.date }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     /** Bumps when files or descriptions change, so open results are recomputed. */
     private val indexVersion = MutableStateFlow(0)
 
     /**
      * Results for [query] (null when not searching), best first. A change to the files (added,
      * removed, renamed, moved) invalidates the index here, before the search it reruns.
+     *
+     * A date in the query narrows the search to the files taken then; a date alone lists them all,
+     * newest first, which needs no descriptions. "Only in this tab" narrows it the same way.
      */
     val searchResults: StateFlow<List<SearchHit>?> =
-        combine(query.debounce(250), settings, category, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, c, all, _ ->
+        combine(parsedQuery, settings, category, allMedia.onEach { app.search.invalidate() }, indexVersion) { q, s, c, all, _ ->
             SearchInput(q, s, c, all)
         }.mapLatest { input ->
-            if (input.query.isBlank()) return@mapLatest null
+            val q = input.query
+            if (q.text.isBlank()) return@mapLatest null
+            val s = input.settings
+            val zone = ZoneId.systemDefault()
+            val dates = q.date?.filter
+            fun wanted(item: MediaEntity): Boolean =
+                (!s.searchCurrentTabOnly || Categories.shows(input.category, item.folderCategory, item.isVideo, s.videosInFolderTabs)) &&
+                    (dates == null || dates.matches(Instant.ofEpochMilli(item.sortDate).atZone(zone).toLocalDate()))
+            if (q.date != null && q.date.text.isEmpty()) return@mapLatest input.all.filter(::wanted).map { SearchHit(it, null) }
             val byId = input.all.associateBy { it.id }
-            val fields = com.lithic.gallery.core.search.HybridSearch.FIELDS.filter { it in input.settings.searchFields }
-            app.search.search(input.query, fields).mapNotNull { r ->
-                val item = byId[r.mediaId] ?: return@mapNotNull null
-                if (input.settings.searchCurrentTabOnly &&
-                    !Categories.shows(input.category, item.folderCategory, item.isVideo, input.settings.videosInFolderTabs)
-                ) return@mapNotNull null
-                SearchHit(item, r)
-            }
+            val fields = HybridSearch.FIELDS.filter { it in s.searchFields }
+            app.search.search(q.date?.text ?: q.text, fields) { id -> byId[id]?.let(::wanted) == true }
+                .mapNotNull { r -> byId[r.mediaId]?.let { SearchHit(it, r) } }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    private data class SearchInput(val query: String, val settings: Settings, val category: Category, val all: List<MediaEntity>)
+    private data class SearchInput(val query: ParsedQuery, val settings: Settings, val category: Category, val all: List<MediaEntity>)
 
     val aiStatus: StateFlow<AiStatus> = combine(
         settings.flatMapLatest { s -> app.db.ai().observeUndescribedCount(s.describeVideos, s.captions, s.ocr) },

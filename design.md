@@ -25,7 +25,7 @@ step identically:
 | OCR | EasyOCR 1.7.2 `Reader(['en']).readtext(np.array(rgb))`, joined by spaces | `EasyOcr`: CRAFT score maps → `CraftBoxes` (connected components, dilation, OpenCV's hull and rotating calipers, `boxPoints`) → `TextGrouping` → `Crops` (OpenCV bilinear, perspective warp) → `Recognizer` (Pillow bicubic, CTC greedy, contrast retry) | `EasyOcrTest`: same boxes and same text on all 42 images, at the default canvas and shrunk to 448 |
 | Embedding | `sentence-transformers/all-MiniLM-L6-v2`, `encode(normalize_embeddings=True)` | `MiniLmEmbedder` + `BertTokenizer.encode` (max 256 tokens) | `MiniLmEmbedderTest`: cosine > 0.99999; `BertTokenizerTest` |
 | Keyword search | MiniSearch 7.2: fields aiCaption, aiOcr, caption, filename, path; `prefix: true, fuzzy: 0.2, combineWith: 'AND'` | `MiniSearch` (port: BM25+, prefix weight 0.375, fuzzy 0.45, JS rounding; a field's average length is the exact mean rather than MiniSearch's running average, so scores do not depend on the order documents were added in: they agree to ~1e-15) | `MiniSearchTest`: same ids, same scores, 164 queries; the same scores, exactly, whatever the order documents came in |
-| Hybrid | BM25 top 200 + cosine top 200, RRF k=60, best 500; semantic only if description or OCR field searched | `HybridSearch` | by construction (small) |
+| Hybrid | BM25 top 200 + cosine top 200, RRF k=60, best 500; semantic only if description or OCR field searched | `HybridSearch` (plus narrowing, below) | by construction (small); `HybridSearchTest`: narrowed, the best are the best among the files allowed |
 
 Reference output comes from thumbsup2 itself (`tools/make_reference.py` runs its unmodified
 `ai_describe.py`), HuggingFace's tokenizers, thumbsup2's MiniSearch build, and torchvision /
@@ -75,6 +75,10 @@ Deliberate differences from thumbsup2:
   threshold. On an S22 Ultra it reads 41 of the 42 test images exactly as EasyOCR does; the
   42nd, a bus sign read as garble anyway, loses one stray "M". Off, or on other phones, OCR is
   thumbsup2's to the bit.
+- **Searches can be narrowed to dates and to a tab before ranking** (`HybridSearch`'s
+  `accept`): "beach last summer" ranks among the files taken last summer, so the best 200 are
+  the best of those, not the best of the whole library cut afterwards. Keyword scores still
+  weigh words by the whole index. thumbsup2 has neither dates in queries nor tabs.
 - **Keyword scores use a field's exact mean length**, not MiniSearch's running average, whose
   last bits depend on the order documents were added and removed in: the app's index changes
   file by file, and must score the same as one built afresh. Scores agree with thumbsup2's to
@@ -248,7 +252,31 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   database. The view model invalidates on file changes in the same flow that reruns the search,
   before it. Queries are embedded with a MiniLM session kept for search, freed (about 90 MB)
   when the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM
-  is removed.
+  is removed. `search` takes an `accept` (by media id) that narrows the candidates before
+  ranking (`HybridSearch`): the view model passes "taken on these days" and "in this tab".
+- **Dates in a query** (`core/search/DatePhrases`, `DatePhrasesTest` at a fixed today): the
+  first date phrase is taken out of the query and becomes a filter on the day each file was
+  taken (`sortDate` in the phone's time zone); the rest is searched as words. Rules are tried in
+  order, most specific first: year ranges and bounds ("2019-2021", "since 2020", "before
+  2010"), days (ISO, 3/5/2024 in the locale's order, "march 5th 2023", "march 5": the latest
+  one not after today), today/yesterday/last night, counting back ("the past 3 months", "two
+  weeks ago", "a few days ago": 2 to 4), the calendar ("last week" by the locale's first day,
+  "this weekend", "last year"), the latest of something yearly ("last summer": the latest over;
+  "this march": the one under way, else this year's), with a year ("summer 2023": the season's
+  months in that year; "christmas 2022"), decades, a year (not one still to come: "2048" is
+  likelier the game), then every year ("in july", "at christmas"). Seasons are whole months,
+  turned round in the southern hemisphere (by the locale's country). Holidays: Christmas (24-26
+  December), its Eve and Day, New Year (31 December and 1 January), its Eve and Day, Halloween,
+  Valentine's Day, the Fourth of July, Easter (Good Friday to Easter Monday, Gregorian computus),
+  Thanksgiving (the United States' Thursday to Sunday, Canada's long weekend). A word that is
+  also an ordinary word (a month, season, holiday, weekday, a bare "90s") is a date only with
+  something that makes it one ("last", "in", a year) or when it is the whole query: "christmas
+  tree" searches for Christmas trees; "may" is never a date alone. Words leading into the phrase
+  ("taken in", "from") go with it, and words that only say "pictures" ("show me photos from")
+  are not searched for. A date alone lists every file taken then, newest first (`SearchHit`
+  without a result), which works before anything is described. The filter's label ("summer
+  2026: Jun 1, 2026 – Aug 31, 2026") shows as a chip above the results; its × searches the
+  query as words instead (`GalleryViewModel.dateDismissed`, until the query changes).
 
 ### The GPU (Snapdragon)
 

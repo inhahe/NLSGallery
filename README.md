@@ -44,6 +44,16 @@ pictures whose description *means* what you typed even with different words; the
 blended as in thumbsup2. A dot on a thumbnail marks a result found by meaning alone. Chips under
 the search field choose where to look, and can limit results to the current tab.
 
+**Dates.** Say when, in plain English: "beach last summer", "dog 2023", "christmas", "flowers in
+may", "two weeks ago", "yesterday", "march 5", "the 90s", "since 2020", "between 2019 and 2021".
+The search then looks only among the pictures taken then; a date on its own lists them all,
+newest first (which works before anything is described). A chip under the search field shows
+how the date was read ("summer 2026: Jun 1, 2026 – Aug 31, 2026"); tap it to search for those
+words instead. Seasons follow the phone's region (turned round in the southern hemisphere), weeks
+start on its first day of the week, and 3/5/2024 is read in its order. Words that are also
+ordinary words are dates only when something says so: "christmas tree" looks for Christmas
+trees, "last christmas" for pictures from last Christmas, and "may" alone is never a date.
+
 ### Setting up
 
 The AI needs its models once (about 1.2 GB): the AI button (sparkles) or the menu's

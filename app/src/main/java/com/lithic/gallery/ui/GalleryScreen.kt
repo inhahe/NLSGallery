@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MoreVert
@@ -45,6 +46,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lithic.gallery.core.search.DatePhrases
 import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.LayoutMode
@@ -129,6 +132,7 @@ fun GalleryScreen(
     val items by vm.visibleMedia.collectAsState()
     val query by vm.query.collectAsState()
     val results by vm.searchResults.collectAsState()
+    val searchDate by vm.searchDate.collectAsState()
     val ai by vm.aiStatus.collectAsState()
     val all by vm.allMedia.collectAsState()
     val aspectFixes by vm.aspectFixes.collectAsState()
@@ -175,12 +179,15 @@ fun GalleryScreen(
         } else {
             val list = remember(hits) { hits.map { it.item } }
             if (list.isEmpty()) {
-                NoResults(query, ai, Modifier.padding(top = headerDp))
+                NoResults(query, searchDate, ai, Modifier.padding(top = headerDp))
             } else {
-                val semantic = remember(hits) { hits.filter { it.result.semanticOnly }.map { it.item.id }.toSet() }
+                val semantic = remember(hits) { hits.filter { it.result?.semanticOnly == true }.map { it.item.id }.toSet() }
                 ThumbnailGrid(
                     list, settings, padding,
-                    onOpen = { shown, i -> vm.openViewer(shown, hits.associate { it.item.id to it.result }); onOpenSearchHit(i) },
+                    onOpen = { shown, i ->
+                        vm.openViewer(shown, hits.mapNotNull { h -> h.result?.let { h.item.id to it } }.toMap())
+                        onOpenSearchHit(i)
+                    },
                     onZoom = zoom, state = searchState,
                     badge = { it.id in semantic },
                     aspectFixes = aspectFixes, onAspect = vm::recordAspect,
@@ -214,7 +221,9 @@ fun GalleryScreen(
             }
             CategoryTabs(tabs, category, onSelect = vm::selectCategory)
             if (hits != null) {
+                searchDate?.let { date -> DateChip(date.filter.label) { vm.dateDismissed.value = query } }
                 SearchChips(
+                    words = searchDate?.text?.isEmpty() != true,
                     fields = settings.searchFields,
                     onToggle = { f ->
                         vm.updateSettings { s ->
@@ -358,6 +367,8 @@ private fun CategoryTabs(tabs: List<Category>, selected: Category, onSelect: (Ca
 
 @Composable
 private fun SearchChips(
+    /** Whether words are searched for: not when the query is only a date. */
+    words: Boolean,
     fields: Set<String>,
     onToggle: (String) -> Unit,
     tabOnly: Boolean,
@@ -370,7 +381,7 @@ private fun SearchChips(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            for (f in HybridSearch.FIELDS) {
+            if (words) for (f in HybridSearch.FIELDS) {
                 FilterChip(selected = f in fields, onClick = { onToggle(f) }, label = { Text(FIELD_LABELS.getValue(f), fontSize = 12.sp) })
             }
             FilterChip(selected = tabOnly, onClick = onTabOnly, label = { Text("Only in ${category.label()}", fontSize = 12.sp) })
@@ -382,6 +393,19 @@ private fun SearchChips(
             modifier = Modifier.padding(start = 16.dp, bottom = 4.dp),
         )
     }
+}
+
+/** The date read in the query ([label]: what it was taken to mean); × searches for its words instead. */
+@Composable
+private fun DateChip(label: String, onDismiss: () -> Unit) {
+    InputChip(
+        selected = true,
+        onClick = onDismiss,
+        label = { Text(label, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = { Icon(Icons.Outlined.DateRange, contentDescription = null, Modifier.size(18.dp)) },
+        trailingIcon = { Icon(Icons.Outlined.Close, contentDescription = "Search for these words instead", Modifier.size(18.dp)) },
+        modifier = Modifier.padding(horizontal = 8.dp),
+    )
 }
 
 @Composable
@@ -414,9 +438,19 @@ private fun EmptyTab(category: Category, libraryEmpty: Boolean, modifier: Modifi
 }
 
 @Composable
-private fun NoResults(query: String, ai: AiStatus, modifier: Modifier) {
+private fun NoResults(query: String, date: DatePhrases.DateQuery?, ai: AiStatus, modifier: Modifier) {
     Column(modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text("Nothing matches “$query”.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            when {
+                date == null -> "Nothing matches “$query”."
+                // The chip above says when.
+                date.text.isEmpty() -> "No photos or videos were taken then."
+                else -> "Nothing taken then matches “${date.text}”."
+            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Listed by date alone, describing has no part in it.
+        if (date != null && date.text.isEmpty()) return@Column
         if (ai.featuresOff) {
             Spacer(Modifier.height(8.dp))
             Text(

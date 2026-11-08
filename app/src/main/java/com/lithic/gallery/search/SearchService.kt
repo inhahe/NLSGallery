@@ -154,10 +154,11 @@ open class SearchService(
     }
 
     /**
-     * thumbsup2's hybrid search for [query] in [fields]; meaning is only used when the MiniLM
+     * thumbsup2's hybrid search for [query] in [fields], among the files [accept] takes (by media
+     * id; null for all) when it is given: a date, a tab. Meaning is only used when the MiniLM
      * model is downloaded.
      */
-    suspend fun search(query: String, fields: List<String>): List<Result> = withContext(Dispatchers.Default) {
+    suspend fun search(query: String, fields: List<String>, accept: ((Long) -> Boolean)? = null): List<Result> = withContext(Dispatchers.Default) {
         val q = query.trim()
         if (q.isEmpty()) return@withContext emptyList()
         awaitCurrent()
@@ -167,7 +168,7 @@ open class SearchService(
                 .sortedWith(newestFirst)
                 .map { it.id to it.vector!! }
                 .also { nearest = it }
-            HybridSearch.search(q, index, fields, queryVector, near, tieBreak)
+            HybridSearch.search(q, index, fields, queryVector, near, tieBreak, accept?.let { a -> { id -> a(byId.getValue(id).mediaId) } })
                 // thumbsup2 lists its 200 nearest by meaning however weak; a gallery would then
                 // "match" everything. Drop the meaning-only ones that are unrelated (unchanged order).
                 .filter { !it.semanticOnly || (it.similarity ?: 0f) >= MIN_SIMILARITY }

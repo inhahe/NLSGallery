@@ -26,6 +26,9 @@ object HybridSearch {
      * @param queryEmbedding the query's embedding, or null to rank by keywords alone.
      * @param embeddings the documents' embeddings in a stable order (ties keep it).
      * @param tieBreak orders equal keyword scores, or null for insertion order.
+     * @param accept the documents that may be found (a date, a tab), or null for all. It narrows
+     *   the candidates before they are ranked and cut, so the best 200 are the best among them.
+     *   Keyword scores still weigh words by how common they are in the whole index.
      */
     fun search(
         query: String,
@@ -34,13 +37,14 @@ object HybridSearch {
         queryEmbedding: FloatArray?,
         embeddings: Iterable<Pair<Int, FloatArray>>,
         tieBreak: Comparator<Int>? = null,
+        accept: ((Int) -> Boolean)? = null,
     ): List<Hit> {
         if (query.isBlank() || fields.isEmpty()) return emptyList()
-        val bm25 = keyword.search(query, fields, tieBreak).take(TOP)
+        val bm25 = keyword.search(query, fields, tieBreak).let { all -> if (accept == null) all else all.filter { accept(it.id) } }.take(TOP)
         val semanticWanted = queryEmbedding != null && (AI_CAPTION in fields || AI_OCR in fields)
         val semantic: List<Pair<Int, Float>> = if (!semanticWanted) emptyList() else {
             val scored = ArrayList<Pair<Int, Float>>()
-            for ((id, v) in embeddings) scored.add(id to dot(v, queryEmbedding))
+            for ((id, v) in embeddings) if (accept == null || accept(id)) scored.add(id to dot(v, queryEmbedding))
             scored.sortedByDescending { it.second }.take(TOP)
         }
         val fused = LinkedHashMap<Int, Double>()
