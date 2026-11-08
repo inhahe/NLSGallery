@@ -71,6 +71,10 @@ data class Settings(
     val aiThreads: Int = 0,
     /** Run the text detector on the GPU where there is one it works on (a Snapdragon's). */
     val gpuText: Boolean = true,
+    /** Use the AI on a phone with less memory than it needs ([com.lithic.gallery.ai.Hardware]). */
+    val aiOnWeakPhone: Boolean = false,
+    /** The notice that this phone has too little memory for the AI was shown (it is shown once). */
+    val weakPhoneNoticeShown: Boolean = false,
 
     // Search
     val searchFields: Set<String> = HybridSearch.FIELDS.toSet(),
@@ -104,6 +108,8 @@ class SettingsStore(private val context: Context) {
             p[TEXT_DETAIL] = s.textDetail.name
             p[THREADS] = s.aiThreads
             p[GPU_TEXT] = s.gpuText
+            p[AI_ON_WEAK_PHONE] = s.aiOnWeakPhone
+            p[WEAK_PHONE_NOTICE] = s.weakPhoneNoticeShown
             p[SEARCH_FIELDS] = s.searchFields.joinToString(",")
             p[SEARCH_TAB_ONLY] = s.searchCurrentTabOnly
         }
@@ -129,6 +135,8 @@ class SettingsStore(private val context: Context) {
             textDetail = p[TEXT_DETAIL]?.let { runCatching { TextDetail.valueOf(it) }.getOrNull() } ?: d.textDetail,
             aiThreads = p[THREADS] ?: d.aiThreads,
             gpuText = p[GPU_TEXT] ?: d.gpuText,
+            aiOnWeakPhone = p[AI_ON_WEAK_PHONE] ?: d.aiOnWeakPhone,
+            weakPhoneNoticeShown = p[WEAK_PHONE_NOTICE] ?: d.weakPhoneNoticeShown,
             searchFields = p[SEARCH_FIELDS]?.split(',')?.filter { it in HybridSearch.FIELDS }?.toSet() ?: d.searchFields,
             searchCurrentTabOnly = p[SEARCH_TAB_ONLY] ?: d.searchCurrentTabOnly,
         )
@@ -153,6 +161,8 @@ class SettingsStore(private val context: Context) {
         val TEXT_DETAIL = stringPreferencesKey("text_detail")
         val THREADS = intPreferencesKey("ai_threads")
         val GPU_TEXT = booleanPreferencesKey("gpu_text")
+        val AI_ON_WEAK_PHONE = booleanPreferencesKey("ai_on_weak_phone")
+        val WEAK_PHONE_NOTICE = booleanPreferencesKey("weak_phone_notice_shown")
         val SEARCH_FIELDS = stringPreferencesKey("search_fields")
         val SEARCH_TAB_ONLY = booleanPreferencesKey("search_current_tab_only")
     }

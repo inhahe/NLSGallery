@@ -8,6 +8,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.lithic.gallery.GalleryApp
 import com.lithic.gallery.ai.AiEngine
+import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.ai.ModelManager
 import com.lithic.gallery.ai.ModelState
 import com.lithic.gallery.core.search.DatePhrases
@@ -56,6 +57,8 @@ data class SearchReading(val text: String, val date: DatePhrases.DateQuery?, val
 data class AiStatus(
     /** Describing can run: captions or text reading is on, and the models for them are here. */
     val ready: Boolean = false,
+    /** This phone has too little memory for the AI, and the user has not asked for it anyway. */
+    val notAllowed: Boolean = false,
     /** Captions and text reading are both switched off: nothing is described. */
     val featuresOff: Boolean = false,
     /** A model the current settings need is not downloaded (nor being checked). */
@@ -225,6 +228,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val dlFailed = download.firstOrNull { it.state == WorkInfo.State.FAILED }
         AiStatus(
             ready = app.ai.ready(s),
+            notAllowed = !app.ai.allowed(s),
             featuresOff = !s.captions && !s.ocr,
             modelsMissing = ModelManager.needed(s.captions, s.ocr).any {
                 states[it] != ModelState.Ready && states[it] != ModelState.Verifying
@@ -279,6 +283,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    /** This phone's memory, and whether the AI has what it needs. */
+    val memory: Hardware.Memory = Hardware.memory(app)
 
     /** Where the GPU stands for reading text (Settings shows it). */
     val gpu: StateFlow<AiEngine.Gpu> = app.ai.gpu

@@ -76,9 +76,12 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     private fun probeGpu(env: ai.onnxruntime.OrtEnvironment): com.lithic.gallery.core.ai.Accelerator? =
         SnapdragonGpu.accelerator(env).also { _gpu.compareAndSet(Gpu.UNKNOWN, if (it != null) Gpu.FOUND else Gpu.NONE) }
 
-    /** Whether the models for these settings are downloaded. */
+    /** Whether describing can run: this phone may run the AI, and the models for these settings are downloaded. */
     fun ready(s: Settings): Boolean =
-        (s.captions || s.ocr) && ModelManager.needed(s.captions, s.ocr).all(models::isReady)
+        (s.captions || s.ocr) && allowed(s) && ModelManager.needed(s.captions, s.ocr).all(models::isReady)
+
+    /** Whether this phone may run the AI: it has the memory, or the user asked for it anyway. */
+    fun allowed(s: Settings): Boolean = Hardware.memory(context).enough || s.aiOnWeakPhone
 
     /** What [describe] (or [embedMissing]) did with a file. */
     sealed interface Outcome {

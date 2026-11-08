@@ -37,7 +37,7 @@ class GalleryApp : Application(), SingletonImageLoader.Factory {
     val repository: MediaRepository by lazy { MediaRepository(db, contentResolver) }
     val models: ModelManager by lazy { ModelManager(this) }
     val ai: AiEngine by lazy { AiEngine(this, models, db.ai()) }
-    val search: SearchService by lazy { SearchService(db.ai(), models) { ai.tokenizer } }
+    val search: SearchService by lazy { SearchService(db.ai(), models, { ai.tokenizer }) { ai.allowed(settings.current()) } }
 
     override fun onCreate() {
         super.onCreate()

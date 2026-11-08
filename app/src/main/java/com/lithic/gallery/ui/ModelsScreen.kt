@@ -119,6 +119,8 @@ fun ModelsScreen(vm: GalleryViewModel, onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = vm::cancelDownload) { Text("Cancel download") }
+            } else if (ai.notAllowed && missing.isNotEmpty()) {
+                Text(weakPhoneText(vm.memory.soldAsGb) + " (Settings, AI, to use it anyway.)", style = MaterialTheme.typography.bodyMedium)
             } else if (missing.isNotEmpty()) {
                 val total = missing.sumOf { sizes[it] ?: 0 }
                 Row(verticalAlignment = Alignment.CenterVertically) {

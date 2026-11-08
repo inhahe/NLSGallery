@@ -299,6 +299,17 @@ synced) and `MediaDetails`.
   results; its × searches the query as words instead (`GalleryViewModel.dismissDate`, until the
   query changes).
 
+### Hardware
+
+`Hardware.memory`: the AI needs a phone sold with 6 GB (one reporting at least 5 GiB: 6 GB
+phones report 5.3-5.7, 4 GB ones about 3.6). Describing holds about 2 GB at once, and below
+that Android kills the app or its neighbours mid-run. A phone with less is told so once
+(`Settings.weakPhoneNoticeShown`), and `AiEngine.allowed` is false: no describing
+(`ready`), no model downloads (the screen offers none; the worker refuses), no search by
+meaning (`SearchService`'s `meaningAllowed`). Keyword, date and folder search work without the
+AI. "Use the AI anyway" (`aiOnWeakPhone`) lifts it. The app ships for 64-bit processors only, so
+that need is met wherever it installs.
+
 ### The GPU (Snapdragon)
 
 The text detector (CRAFT) runs on a Snapdragon's Adreno GPU when there is one and "Read text on

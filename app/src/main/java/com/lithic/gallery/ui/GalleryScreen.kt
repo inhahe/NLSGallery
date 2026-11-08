@@ -83,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.core.search.HybridSearch
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
@@ -215,7 +216,7 @@ fun GalleryScreen(
                 query = query,
                 onQuery = { vm.query.value = it },
                 ai = ai,
-                onAi = { if (ai.ready || ai.featuresOff) aiDialog = true else onModels() },
+                onAi = { if (ai.ready || ai.featuresOff || ai.notAllowed) aiDialog = true else onModels() },
                 onSettings = onSettings,
                 onModels = onModels,
                 layoutMode = settings.layoutMode,
@@ -245,7 +246,7 @@ fun GalleryScreen(
                     category = category,
                     count = hits.size,
                 )
-            } else if (!ai.featuresOff && ai.modelsMissing && !ai.downloading && all.isNotEmpty()) {
+            } else if (!ai.featuresOff && !ai.notAllowed && ai.modelsMissing && !ai.downloading && all.isNotEmpty()) {
                 SetupCard(onModels)
             }
         }
@@ -266,7 +267,16 @@ fun GalleryScreen(
         })
     }
 
-    if (aiDialog) AiDialog(ai, onDismiss = { aiDialog = false }, onDescribe = { vm.describeNow(); aiDialog = false },
+    // Once: this phone has too little memory for the AI.
+    if (ai.notAllowed && !settings.weakPhoneNoticeShown) {
+        WeakPhoneDialog(
+            vm.memory.soldAsGb,
+            onOk = { vm.updateSettings { it.copy(weakPhoneNoticeShown = true) } },
+            onAnyway = { vm.updateSettings { it.copy(weakPhoneNoticeShown = true, aiOnWeakPhone = true) } },
+        )
+    }
+
+    if (aiDialog) AiDialog(ai, vm.memory.soldAsGb, onDismiss = { aiDialog = false }, onDescribe = { vm.describeNow(); aiDialog = false },
         onStop = { vm.stopDescribing(); aiDialog = false }, onRetry = { vm.retryFailures(); aiDialog = false },
         onSettings = { aiDialog = false; onSettings() })
 }
@@ -503,7 +513,13 @@ private fun NoResults(r: SearchReading, tab: Category?, ai: AiStatus, modifier: 
         )
         // A listing (no words searched for): describing has no part in it.
         if (r.words.isEmpty()) return@Column
-        if (ai.featuresOff) {
+        if (ai.notAllowed) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "This phone has too little memory for the AI, so search finds dates, places, file names and folders.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
+            )
+        } else if (ai.featuresOff) {
             Spacer(Modifier.height(8.dp))
             Text(
                 "Captions and text reading are off (Settings, AI), so only what was described before, " +
@@ -540,9 +556,29 @@ private fun noResults(r: SearchReading, tab: Category?): String {
     }
 }
 
+/** What a phone with too little memory for the AI ([memoryGb], as sold) is told, once. */
+@Composable
+private fun WeakPhoneDialog(memoryGb: Int, onOk: () -> Unit, onAnyway: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onOk,
+        icon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
+        title = { Text("Not enough memory for the AI") },
+        text = { Text(weakPhoneText(memoryGb)) },
+        confirmButton = { TextButton(onClick = onOk) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onAnyway) { Text("Use the AI anyway") } },
+    )
+}
+
+/** Why the AI is off on a phone with [memoryGb] (as sold), and what still works. */
+fun weakPhoneText(memoryGb: Int) =
+    "This phone has $memoryGb GB of memory. Describing pictures and searching them by what they show need at least " +
+        "${Hardware.NEEDED_GB} GB: with less, Android closes the app, or others, while it works. So they are off. " +
+        "You can still browse, and search by date, place, file name and folder."
+
 @Composable
 private fun AiDialog(
     ai: AiStatus,
+    memoryGb: Int,
     onDismiss: () -> Unit,
     onDescribe: () -> Unit,
     onStop: () -> Unit,
@@ -556,6 +592,7 @@ private fun AiDialog(
         text = {
             Column {
                 when {
+                    ai.notAllowed -> Text(weakPhoneText(memoryGb) + " (Settings, AI, to use it anyway.)")
                     ai.featuresOff && !ai.running -> Text(
                         "Captions and text reading are both off (Settings, AI), so nothing is described. " +
                             "Search still finds what was described before.",
@@ -584,7 +621,7 @@ private fun AiDialog(
         },
         confirmButton = {
             when {
-                ai.featuresOff && !ai.running -> TextButton(onClick = onDismiss) { Text("OK") }
+                ai.notAllowed || (ai.featuresOff && !ai.running) -> TextButton(onClick = onDismiss) { Text("OK") }
                 ai.running -> TextButton(onClick = onStop) { Text("Stop") }
                 ai.undescribed > 0 -> TextButton(onClick = onDescribe) { Text("Describe now") }
                 ai.failures > 0 -> TextButton(onClick = onRetry) { Text("Retry failed") }

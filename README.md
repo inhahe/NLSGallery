@@ -5,6 +5,19 @@ after it was installed), sorted into tabs, laid out without cropping, and search
 the pictures show. The descriptions are made on the phone by the same AI models
 [thumbsup2](../thumbsup2) uses, and searched the same way.
 
+## What it needs
+
+- **Android 10 or newer, on a 64-bit phone** (every phone of the last several years).
+- **For the AI** (describing pictures, and searching them by what they show): **at least 6 GB
+  of memory**. Describing holds about 2 GB at once; with less, Android closes the app, or the
+  apps around it, while it works. On a phone with less, NLSGallery says so the first time it
+  opens and leaves the AI off; browsing and searching by date, place, file name and folder still
+  work. Settings → AI → *Use the AI anyway* turns it on regardless.
+- **About 1.5 GB of free storage** for the AI models.
+- **Time**: describing a whole library takes hours (a few seconds a picture for the caption, up
+  to a minute for the text in it), so the first run is best left going on the charger.
+  Snapdragon phones read text about five times as fast (see *Read text on the GPU*).
+
 ## Tabs
 
 Across the top:

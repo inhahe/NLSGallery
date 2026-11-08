@@ -316,6 +316,8 @@ class NewMediaWorker(context: Context, params: WorkerParameters) : CoroutineWork
 class ModelDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as GalleryApp
+        // Not on a phone that may not run the AI (the screen offers none; this is the backstop).
+        if (!app.ai.allowed(app.settings.current())) return Result.success()
         val keys = inputData.getNullableStringArray(Work.KEY_KEYS)?.filterNotNull() ?: return Result.success()
         val total = app.models.totalSize(keys.filter { !app.models.isReady(it) })
         runCatching { setForeground(Work.downloadNotification(applicationContext, id, 0, total)) }

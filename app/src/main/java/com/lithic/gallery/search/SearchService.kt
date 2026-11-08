@@ -35,6 +35,8 @@ open class SearchService(
     private val dao: AiDao,
     private val models: ModelManager,
     private val tokenizer: () -> BertTokenizer,
+    /** Whether search by meaning may run (the phone may run the AI). */
+    private val meaningAllowed: suspend () -> Boolean = { true },
 ) {
     /** Guards the index and the documents; never held while the database is read. */
     private val mutex = Mutex()
@@ -178,7 +180,7 @@ open class SearchService(
 
     /** [text]'s MiniLM embedding, or null without the model (tests give their own). */
     internal open suspend fun embedQuery(text: String): FloatArray? {
-        if (!models.isReady(ModelManager.MINILM)) return null
+        if (!meaningAllowed() || !models.isReady(ModelManager.MINILM)) return null
         return mutex.withLock {
             try {
                 val e = embedder ?: MiniLmEmbedder(Onnx(models.store), tokenizer()).also { embedder = it }

@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.lithic.gallery.ai.AiEngine
+import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.data.LayoutMode
 import com.lithic.gallery.data.Settings
 import com.lithic.gallery.data.TextDetail
@@ -81,6 +82,12 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
             Toggle("All tab", "Every photo and video together", s.showAllTab) { v -> set { it.copy(showAllTab = v) } }
 
             Section("AI descriptions")
+            if (!vm.memory.enough) {
+                Toggle("Use the AI anyway",
+                    "This phone has ${vm.memory.soldAsGb} GB of memory; the AI needs ${Hardware.NEEDED_GB} GB. Describing may be " +
+                        "very slow, and Android may close the app (or others) while it works.",
+                    s.aiOnWeakPhone) { v -> set { it.copy(aiOnWeakPhone = v) } }
+            }
             Row(Modifier.fillMaxWidth().clickable(onClick = onModels).padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text("AI models")
