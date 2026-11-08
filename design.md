@@ -69,6 +69,12 @@ Deliberate differences from thumbsup2:
   3 strips, 1.4× the work). `CraftTilingTest`: with a 256 px margin the score maps are
   identical to running whole (difference 0.0) on all 42 test images cut once or twice, so the
   text is too; with 192 px two images read differently, with 128 px three.
+- **On a Snapdragon's GPU, text detection runs in float16** ("Read text on the GPU", on by
+  default where there is one; see "The GPU" below). Its scores differ from float32's by about
+  one part in a thousand, which can move a box edge by a pixel where a score sits at a
+  threshold. On an S22 Ultra it reads 41 of the 42 test images exactly as EasyOCR does; the
+  42nd, a bus sign read as garble anyway, loses one stray "M". Off, or on other phones, OCR is
+  thumbsup2's to the bit.
 - **Keyword scores use a field's exact mean length**, not MiniSearch's running average, whose
   last bits depend on the order documents were added and removed in: the app's index changes
   file by file, and must score the same as one built afresh. Scores agree with thumbsup2's to
@@ -96,6 +102,11 @@ downloads the publishers' own files (`models.json`: URL, size, SHA-256):
 | `minilm` | `model.safetensors` | HuggingFace `sentence-transformers/all-MiniLM-L6-v2` @ c9745ed | 91 MB |
 | `craft` | `craft_mlt_25k.pth` (in a zip) | EasyOCR GitHub release pre-v1.1.6 | 83 MB |
 | `english_g2` | `english_g2.pth` (in a zip) | EasyOCR GitHub release v1.3 | 15 MB |
+
+`craft_fp16.onnx` is CRAFT computing in float16, for a GPU (`export_craft_half`, with
+onnxconverter-common): the same references into the official float32 file, each weight cast to
+float16 inside the graph (ONNX Runtime folds the casts when it opens the session), the image in
+and the scores out float32. 67 KB; no weights are duplicated.
 
 BLIP is two graphs: `blip_vision` computes the image's cross-attention keys and values for all
 12 decoder layers once; `blip_decoder` is one greedy step (one token, the self-attention cache,
@@ -238,6 +249,59 @@ ExoPlayer started on tap. Share, edit/open with (intents), move to trash
   before it. Queries are embedded with a MiniLM session kept for search, freed (about 90 MB)
   when the app leaves the screen (`ProcessLifecycleOwner` stop, so not on rotation) or MiniLM
   is removed.
+
+### The GPU (Snapdragon)
+
+The text detector (CRAFT) runs on a Snapdragon's Adreno GPU when there is one and "Read text on
+the GPU" is on (`Settings.gpuText`, default on; the toggle is greyed out elsewhere).
+
+- **How**: Qualcomm's QNN execution provider, a plugin to ONNX Runtime
+  (`com.qualcomm.qti:onnxruntime-android-qnn` + `qnn-runtime`), registered once by
+  `SnapdragonGpu` (SoC maker "QTI" or hardware "qcom"; elsewhere, and in the x86 build, there is
+  none). QNN offers one device for all its backends; `backend_type=gpu` picks the GPU. Its GPU
+  backend runs on OpenCL, a vendor library an app may load only when the manifest declares it
+  (`<uses-native-library android:name="libOpenCL.so" android:required="false">`; without it,
+  `QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED`). The Hexagon NPU and DSP backends (about 200 MB)
+  are left out of the APK; what remains adds about 21 MB.
+- **Float16** (`craft_fp16.onnx`): the plugin has no precision option for the GPU, so the graph
+  itself computes in float16. Measured on a Galaxy S22 Ultra (Snapdragon 8 Gen 1, Adreno 730)
+  by `GpuProbe`, the phone warm (thermal status 1-2, which describing reaches within a minute):
+
+  | Input | CPU (float32) | GPU (float16) | Compiling a shape | GPU memory |
+  |---|---|---|---|---|
+  | 0.3 MP | 2.4 s | 0.48 s | 2.7 s | 0.6 GB |
+  | 0.6 MP | 4.8 s | 0.95 s | 2.8 s | 1.1 GB |
+  | 1.2 MP | 9.7 s | 1.73 s | 2.9 s | 2.1 GB |
+  | 1.6 MP | 12.4 s | 2.28 s | 3.0 s | 2.8 GB |
+  | 2.6 MP (a whole screenshot) | 20.3 s | 3.6 s | 3.4 s | 4.4 GB |
+
+  Float32 on the same GPU is no use: 2.2× the CPU while the phone is cool, 1.15× once it warms
+  (its clock is cut hard at thermal status 1), at 3.5 KB a pixel: 5.5 GB for 1.6 MP, which got
+  the process killed. Float16's scores differ from float32's by about one part in a thousand.
+- **Fixed shapes**: QNN needs every dimension fixed, so each input shape gets its own session
+  (`setSymbolicDimensionValue`), compiled in about 3 s. `EasyOcr` sends an input to the GPU from
+  0.6 MP (where compiling pays for itself on one image), or from 0.2 MP once its shape has been
+  seen before (a camera's photos, a phone's screenshots share one). It keeps the sessions of
+  recent shapes open while their pixels add up to `acceleratedCachePixels`, closing the least
+  recently used before compiling another, since each holds its activations while open; tiles
+  are cut to `acceleratedMaxTilePixels`. Both are `AiEngine.gpuPixels`: 2.7 MP on 12 GB phones
+  (a screenshot whole, as on the CPU), 1.6 MP on 8 GB ones, 0.8 MP below. The CPU then sees only
+  small inputs, so its session stays small too.
+- **Checked, and dropped on failure**: once a process, `acceleratorAgrees` runs a made-up input
+  on both, within 0.01 (scores run from 0 to 1, EasyOCR's thresholds are 0.4 and 0.7; float16
+  moves them by about 0.001, a driver computing a graph wrongly, as Adreno does BLIP's encoder,
+  by the order of the scores). An exception on the GPU drops it for the rest of the process and
+  the CPU takes over the same input.
+- **Not on the GPU**: BLIP's vision encoder computes wrongly there (largest difference 10 on
+  outputs up to 8) and slower (3.8 s against 1.2 s). The recognizer and MiniLM have inputs of
+  varying length, so a session per length, for models that take milliseconds. QNN's EP context
+  cache (a compiled shape saved) is 84 MB per shape and loads in 1 s instead of 3: not worth the
+  storage.
+- **Tests**: `EasyOcrTest.fixedShapeSessionsReadTheSameText` runs the float16 graph through
+  fixed-shape sessions on the desktop CPU (EasyOCR's text on all 42 images);
+  `OnDeviceModelTest.gpuReadsAsEasyOcrDoes` runs it on the phone's GPU (at most a tenth of the
+  images read differently, each by a character or two; over all 42 the GPU took 98 s against
+  the CPU's 161 s, compiling included, the large images 2.2-2.5× faster whole).
 
 ### Background work (`work/Workers.kt`)
 

@@ -87,6 +87,12 @@ When something goes wrong:
 messages in full detail and camera photos and videos at half size, about 10 seconds each instead
 of a minute; *Full* reads everything as thumbsup2 does; *Fast* reads everything at half size.
 
+**Read text on the GPU** (Settings → AI, on by default on Snapdragon phones): the text detector
+runs on the phone's graphics processor, about five times as fast (finding the text in a camera
+photo takes about 2 seconds instead of 10, at full detail about 10 instead of 50). It computes in half
+precision, which now and then moves a text box by a pixel, so a word can read differently from
+thumbsup2's; switched off, text is read exactly as thumbsup2 reads it.
+
 ## Installing
 
 With the phone connected by USB (USB debugging on in Developer options, and this computer

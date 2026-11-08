@@ -32,6 +32,10 @@
         android:theme="@style/Theme.Gallery"
         tools:targetApi="36">
 
+        <!-- The Snapdragon GPU backend (QNN) runs on OpenCL, a vendor library an app may load only
+             when it says so. Not required: elsewhere describing runs on the CPU. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -2,6 +2,7 @@ package com.lithic.gallery.core.ai.easyocr
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
+import com.lithic.gallery.core.ai.Accelerator
 import com.lithic.gallery.core.ai.Onnx
 import com.lithic.gallery.core.ai.toFloatArray
 import com.lithic.gallery.core.image.CvOps
@@ -22,6 +23,106 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
      * EasyOCR's default is 2560; smaller is faster and misses more small text.
      */
     var canvasSize = DEFAULT_CANVAS
+
+    /**
+     * Runs the detector (CRAFT) where set, in float16 ([ACCELERATED_GRAPH]), on inputs of at
+     * least [acceleratedFrom] pixels, in tiles of at most [acceleratedMaxTilePixels]; the CPU runs
+     * the rest. It needs fixed shapes, so each input shape gets a session of its own, kept while
+     * the shapes open add up to [acceleratedCachePixels]. If it fails, it is dropped (the CPU
+     * takes over) and [onAcceleratorFailed] told.
+     *
+     * Float16 departs from EasyOCR's float32 by about one part in a thousand of a score, which
+     * moves a text box by a pixel now and then (see design.md).
+     */
+    var accelerator: Accelerator? = null
+        set(value) {
+            field = value
+            closeAccelerated()
+        }
+
+    /**
+     * Inputs this large go to the accelerator at once; smaller ones from [acceleratedRepeatFrom]
+     * once their shape has been seen before. Compiling a session for a shape costs about as much
+     * as the CPU takes for this many pixels, so a shape met once is not worth it below it, and
+     * shapes do recur (a camera's photos, a phone's screenshots).
+     */
+    var acceleratedFrom = DEFAULT_ACCELERATED_FROM
+
+    /** The smallest input the accelerator takes, the second time its shape comes. */
+    var acceleratedRepeatFrom = DEFAULT_ACCELERATED_REPEAT_FROM
+
+    /** The input shapes met so far, (height, width). */
+    private val shapesSeen = HashSet<Pair<Int, Int>>()
+
+    /** The accelerator's tile budget, bounding a session's memory as [maxTilePixels] does the CPU's. */
+    var acceleratedMaxTilePixels = DEFAULT_ACCELERATED_MAX_TILE_PIXELS
+
+    /**
+     * The input pixels of the accelerator's sessions kept open together. Each holds its
+     * activations while open, so this bounds their memory; at least the one in use is kept.
+     */
+    var acceleratedCachePixels = DEFAULT_ACCELERATED_MAX_TILE_PIXELS
+
+    var onAcceleratorFailed: (Exception) -> Unit = {}
+
+    /** Fixed-shape sessions on the accelerator, by (height, width), least recently used first. */
+    private val accelerated = LinkedHashMap<Pair<Int, Int>, OrtSession>(4, 0.75f, true)
+
+    private fun closeAccelerated() {
+        accelerated.values.forEach { it.close() }
+        accelerated.clear()
+    }
+
+    /** The accelerator's session for [h]×[w], compiled after closing the least used ones it would not fit beside. */
+    private fun acceleratedSession(acc: Accelerator, h: Int, w: Int): OrtSession {
+        accelerated[h to w]?.let { return it }
+        val need = h.toLong() * w
+        while (accelerated.isNotEmpty() && accelerated.keys.sumOf { (sh, sw) -> sh.toLong() * sw } + need > acceleratedCachePixels) {
+            accelerated.remove(accelerated.keys.first())?.close()
+        }
+        return onnx.session("craft", ACCELERATED_GRAPH, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).also { accelerated[h to w] = it }
+    }
+
+    /** CRAFT on [input] (1×3×[h]×[w]): on the accelerator if it should take it, else the CPU. */
+    private fun runCraft(input: FloatArray, h: Int, w: Int): FloatArray {
+        val acc = accelerator
+        val pixels = h.toLong() * w
+        val repeated = !shapesSeen.add(h to w)
+        if (acc != null && (pixels >= acceleratedFrom || (repeated && pixels >= acceleratedRepeatFrom))) {
+            try {
+                return run(acceleratedSession(acc, h, w), input, h, w)
+            } catch (e: Exception) {
+                accelerator = null
+                onAcceleratorFailed(e)
+            }
+        }
+        return run(craft, input, h, w)
+    }
+
+    private fun run(session: OrtSession, input: FloatArray, h: Int, w: Int): FloatArray =
+        onnx.floats(input, 1, 3, h.toLong(), w.toLong()).use { t ->
+            session.run(mapOf("image" to t)).use { r -> (r[0] as OnnxTensor).toFloatArray() }
+        }
+
+    /**
+     * Whether the [accelerator] computes CRAFT as the CPU does, on a made-up 256×384 input: its
+     * largest difference within [tolerance]. Scores run from 0 to 1 (EasyOCR's thresholds are 0.4
+     * and 0.7); float16 alone moves them by about 0.001, a driver computing the graph wrongly by
+     * the order of the scores themselves.
+     */
+    fun acceleratorAgrees(tolerance: Float = 0.01f): Boolean {
+        val acc = accelerator ?: return false
+        val h = 256
+        val w = 384
+        val input = FloatArray(3 * h * w) { ((it * 2654435761L) % 1000).toFloat() / 500f - 1f }
+        val cpu = run(craft, input, h, w)
+        val got = try {
+            onnx.session("craft", ACCELERATED_GRAPH, mapOf("h" to h.toLong(), "w" to w.toLong()), acc).use { run(it, input, h, w) }
+        } catch (e: Exception) {
+            return false
+        }
+        return got.size == cpu.size && got.indices.all { Math.abs(got[it] - cpu[it]) <= tolerance }
+    }
 
     /** One piece of text found, with its box's corners (x, y)×4 in the image. */
     data class Text(val box: DoubleArray, val text: String, val confidence: Double)
@@ -94,7 +195,8 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         // CRAFT's activations take ~1.3 KB per input pixel (6 GB at thumbsup2's 2560×1920), so a
         // large canvas is run in overlapping tiles: each output pixel comes from the tile in whose
         // core it lies, at least [tileMargin] input pixels from a tile edge that is not the image's.
-        val (xs, ys) = tilePlan(tw32, th32, maxTilePixels, tileMargin)
+        val budget = if (accelerator != null) minOf(maxTilePixels, acceleratedMaxTilePixels) else maxTilePixels
+        val (xs, ys) = tilePlan(tw32, th32, budget, tileMargin)
         for ((cy0, cy1) in ys) for ((cx0, cx1) in xs) {
             val y0 = maxOf(0, cy0 - tileMargin); val y1 = minOf(th32, cy1 + tileMargin)
             val x0 = maxOf(0, cx0 - tileMargin); val x1 = minOf(tw32, cx1 + tileMargin)
@@ -105,9 +207,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
                     System.arraycopy(input, c * plane + (y0 + y) * tw32 + x0, t, c * h * w + y * w, w)
                 }
             }
-            val scores = onnx.floats(tile, 1, 3, h.toLong(), w.toLong()).use { t ->
-                craft.run(mapOf("image" to t)).use { r -> (r[0] as OnnxTensor).toFloatArray() }
-            }
+            val scores = runCraft(tile, h, w)
             val outW = w / 2
             for (my in cy0 / 2 until cy1 / 2) for (mx in cx0 / 2 until cx1 / 2) {
                 val s = ((my - y0 / 2) * outW + (mx - x0 / 2)) * 2
@@ -128,6 +228,7 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
     var tileMargin = DEFAULT_TILE_MARGIN
 
     override fun close() {
+        closeAccelerated()
         craft.close()
         recognizerSession.close()
     }
@@ -178,6 +279,18 @@ class EasyOcr(private val onnx: Onnx) : AutoCloseable {
         /** 2.7 MP: every phone screenshot and a 1920×1440 canvas run whole (about 3.5 GB). */
         const val DEFAULT_MAX_TILE_PIXELS = 2_700_000L
         const val DEFAULT_TILE_MARGIN = 256
+        /** The detector in float16, for the accelerator (made by tools/export_models.py from craft.onnx). */
+        const val ACCELERATED_GRAPH = "craft_fp16.onnx"
+        /**
+         * On a Snapdragon 8 Gen 1's GPU, the phone warm: compiling a session for a new shape takes
+         * about 2.8 s, and a run is five times as quick as the CPU's (0.6 MP in 1.0 s against
+         * 4.8 s), so a shape met once pays for its compiling from about 0.6 MP.
+         */
+        const val DEFAULT_ACCELERATED_FROM = 600_000L
+        /** A shape met again is compiled already: 0.2 MP takes the CPU about 1.6 s, that GPU 0.3 s. */
+        const val DEFAULT_ACCELERATED_REPEAT_FROM = 200_000L
+        /** A session holds about 1.8 KB of GPU memory a pixel: 1.6 MP about 2.9 GB. */
+        const val DEFAULT_ACCELERATED_MAX_TILE_PIXELS = 1_600_000L
         private val MEAN = floatArrayOf((0.485 * 255.0).toFloat(), (0.456 * 255.0).toFloat(), (0.406 * 255.0).toFloat())
         private val STD = floatArrayOf((0.229 * 255.0).toFloat(), (0.224 * 255.0).toFloat(), (0.225 * 255.0).toFloat())
     }

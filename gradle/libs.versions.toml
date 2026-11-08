@@ -15,6 +15,10 @@ iconsExtended = "1.7.8"
 # The same release on the phone (onnxruntime-android) and in the desktop tests
 # (onnxruntime), and the one tools/export_models.py checked the graphs with.
 onnxruntime = "1.31.1"
+# Qualcomm's QNN execution provider (a plugin to the onnxruntime above) and its runtime: the
+# Snapdragon GPU. Only the GPU backend's libraries are packaged (see app/build.gradle.kts).
+qnn-ep = "2.7.0"
+qnn-runtime = "2.51.0"
 coil = "3.6.3"
 telephoto = "0.19.0"
 media3 = "1.11.1"
@@ -51,6 +55,8 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 telephoto-zoomable-image-coil3 = { module = "me.saket.telephoto:zoomable-image-coil3", version.ref = "telephoto" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 onnxruntime-jvm = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
+qnn-ep = { module = "com.qualcomm.qti:onnxruntime-android-qnn", version.ref = "qnn-ep" }
+qnn-runtime = { module = "com.qualcomm.qti:qnn-runtime", version.ref = "qnn-runtime" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

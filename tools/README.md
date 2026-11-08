@@ -8,13 +8,13 @@ easyocr 1.7.2, sentence-transformers 5.4.0).
 ## Environment
 
 A venv layered on thumbsup2's (`~/gallery-tools/.venv` in WSL, README.txt beside it) adds only
-onnx, onnxruntime and onnxscript:
+onnx, onnxruntime, onnxscript and onnxconverter-common:
 
 ```bash
 mkdir -p ~/gallery-tools && cd ~/gallery-tools
 /usr/bin/python3.12 -m venv .venv
 echo "/home/inhahe/thumbsup2/.venv/lib/python3.12/site-packages" > .venv/lib/python3.12/site-packages/thumbsup2-venv.pth
-.venv/bin/pip install onnx onnxruntime onnxscript
+.venv/bin/pip install onnx onnxruntime onnxscript onnxconverter-common
 ```
 
 Without thumbsup2's environment, `requirements.txt` here lists what to install fresh.
@@ -29,7 +29,7 @@ Without thumbsup2's environment, `requirements.txt` here lists what to install f
 | `make_geometry_reference.py` | thumbsup2's | `reference/geometry.json`: OpenCV's `minAreaRect` and `boxPoints` on 520 masks shaped like CRAFT's components |
 | `make_tokenizer_reference.py` | thumbsup2's | `reference/tokenizer.json`: MiniLM encodings and BLIP decodings |
 | `make_search_reference.mjs` | Node | `reference/search.json`: thumbsup2's MiniSearch results |
-| `export_models.py` | thumbsup2's + onnx | `app/src/main/assets/models/`: the graphs, `models.json`, `vocab.txt`; checks each against PyTorch |
+| `export_models.py [--craft-half]` | thumbsup2's + onnx | `app/src/main/assets/models/`: the graphs, `models.json`, `vocab.txt`; checks each against PyTorch. `--craft-half` makes only `craft_fp16.onnx` (the GPU's float16 detector) from the `craft.onnx` already there |
 | `fetch_weights.py` | any | `weights/`: the official weight files (copied from thumbsup2's caches in WSL, or downloaded), SHA-256 checked |
 | `push-test-data.bat [emulator]` | | the test images (files and PIL's pixels) and references onto the phone or the emulator, for the on-device tests |
 

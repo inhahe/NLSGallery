@@ -25,11 +25,23 @@ data class OnnxOptions(
     val threads: Int = 0,
 )
 
+/**
+ * Hardware that runs a graph faster than the CPU once its input shapes are fixed (a phone's GPU):
+ * it adds its execution provider to a session's options.
+ */
+fun interface Accelerator {
+    fun addTo(options: OrtSession.SessionOptions)
+}
+
 /** Opens sessions for the graphs, each reading its weights from the official file. */
 class Onnx(private val store: ModelStore, private val options: OnnxOptions = OnnxOptions()) {
     val env: OrtEnvironment = OrtEnvironment.getEnvironment()
 
-    fun session(model: String, graph: String): OrtSession =
+    /**
+     * A session for [graph] of [model]. [dims] fixes the graph's named free dimensions (an
+     * [accelerator] needs every shape fixed); the accelerator, if any, runs what it can.
+     */
+    fun session(model: String, graph: String, dims: Map<String, Long> = emptyMap(), accelerator: Accelerator? = null): OrtSession =
         // The session copies its options when it is made: they are freed right after.
         OrtSession.SessionOptions().use { so ->
             so.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
@@ -38,6 +50,8 @@ class Onnx(private val store: ModelStore, private val options: OnnxOptions = Onn
             // data (the weight file the initializers point into) lives.
             so.addConfigEntry("session.model_external_initializers_file_folder_path",
                 store.weightsDir(model).absolutePath)
+            for ((name, value) in dims) so.setSymbolicDimensionValue(name, value)
+            accelerator?.addTo(so)
             env.createSession(store.graph(model, graph), so)
         }
 

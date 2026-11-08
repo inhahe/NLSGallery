@@ -69,6 +69,8 @@ data class Settings(
     val textDetail: TextDetail = TextDetail.BALANCED,
     /** ONNX Runtime threads, 0 for its own choice. */
     val aiThreads: Int = 0,
+    /** Run the text detector on the GPU where there is one it works on (a Snapdragon's). */
+    val gpuText: Boolean = true,
 
     // Search
     val searchFields: Set<String> = HybridSearch.FIELDS.toSet(),
@@ -101,6 +103,7 @@ class SettingsStore(private val context: Context) {
             p[DESCRIBE_VIDEOS] = s.describeVideos
             p[TEXT_DETAIL] = s.textDetail.name
             p[THREADS] = s.aiThreads
+            p[GPU_TEXT] = s.gpuText
             p[SEARCH_FIELDS] = s.searchFields.joinToString(",")
             p[SEARCH_TAB_ONLY] = s.searchCurrentTabOnly
         }
@@ -125,6 +128,7 @@ class SettingsStore(private val context: Context) {
             describeVideos = p[DESCRIBE_VIDEOS] ?: d.describeVideos,
             textDetail = p[TEXT_DETAIL]?.let { runCatching { TextDetail.valueOf(it) }.getOrNull() } ?: d.textDetail,
             aiThreads = p[THREADS] ?: d.aiThreads,
+            gpuText = p[GPU_TEXT] ?: d.gpuText,
             searchFields = p[SEARCH_FIELDS]?.split(',')?.filter { it in HybridSearch.FIELDS }?.toSet() ?: d.searchFields,
             searchCurrentTabOnly = p[SEARCH_TAB_ONLY] ?: d.searchCurrentTabOnly,
         )
@@ -148,6 +152,7 @@ class SettingsStore(private val context: Context) {
         val DESCRIBE_VIDEOS = booleanPreferencesKey("describe_videos")
         val TEXT_DETAIL = stringPreferencesKey("text_detail")
         val THREADS = intPreferencesKey("ai_threads")
+        val GPU_TEXT = booleanPreferencesKey("gpu_text")
         val SEARCH_FIELDS = stringPreferencesKey("search_fields")
         val SEARCH_TAB_ONLY = booleanPreferencesKey("search_current_tab_only")
     }

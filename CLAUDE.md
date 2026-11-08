@@ -29,6 +29,10 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   com.lithic.gallery.<Test> com.lithic.gallery.debug.test/androidx.test.runner.AndroidJUnitRunner`.
   Not `gradlew connectedAndroidTest`: it may uninstall the app afterwards, which deletes the
   1.2 GB of models in its folder.
+- On a Snapdragon phone: `OnDeviceModelTest#gpuReadsAsEasyOcrDoes` (the 42 images' text on the
+  GPU against EasyOCR's) and `GpuProbe` (CRAFT's speed and memory on the GPU, shape by shape and
+  sustained; logs only). Time the GPU on a warm phone: within a minute of load it reaches thermal
+  status 1 and runs at about half its cool speed, which is what describing a library gets.
 - Emulator end to end: the `gallery_test` AVD (16 GB data), `tools/seed-emulator.sh --models`,
   `tools/emu-search.sh "query" out.png` (refuses unless the gallery is in front, so keystrokes
   never land in another app).
@@ -53,6 +57,11 @@ first build handed over.
   files copied into them: the app makes its `models` folder, the copy scripts open it first.
 - CRAFT needs ~1.3 KB per input pixel: never run it whole on a large canvas (see tiling in
   `design.md`).
+- On the GPU a CRAFT session holds ~1.8 KB per pixel (float16) for as long as it is open, and
+  float32 twice that: open sessions add up, and the phone kills the process without an
+  exception. Two cached float32 sessions did.
+- QNN's GPU backend needs `libOpenCL.so` declared in the manifest (`uses-native-library`), or it
+  fails with `QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED`.
 - Room schema changes need a migration (`GalleryDatabase`), not a reinstall: the models live
   in the app's folder and a clear-data loses them. Add each one to `MigrationTest`, and commit
   the schema KSP writes to `app/schemas`.

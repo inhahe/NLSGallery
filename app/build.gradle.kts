@@ -105,6 +105,8 @@ android {
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*", "/META-INF/NOTICE*")
+        // QNN's Hexagon NPU and DSP backends (about 200 MB): the GPU backend is the one used.
+        jniLibs.excludes += setOf("**/libQnnHtp*.so", "**/libQnnDsp*.so")
     }
 
     // The exported Room schemas, which MigrationTest builds old databases from.
@@ -123,6 +125,8 @@ tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach { depe
 dependencies {
     implementation(project(":core"))
     implementation(libs.onnxruntime.android)
+    implementation(libs.qnn.ep)
+    implementation(libs.qnn.runtime)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -14,6 +14,7 @@ import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
 import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.work.Work
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -146,6 +147,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AiStatus())
 
     val modelStates: StateFlow<Map<String, ModelState>> = app.models.state
+
+    /**
+     * Whether this phone has a GPU the text reader runs on (a Snapdragon's): false until known,
+     * found off the main thread, as finding it loads the GPU's libraries.
+     */
+    val gpuAvailable: StateFlow<Boolean> = MutableStateFlow(false).also { found ->
+        viewModelScope.launch(Dispatchers.Default) { found.value = app.ai.gpuAvailable() }
+    }
 
     /** Displayed aspect ratios learned from thumbnails, by media id (see [recordAspect]). */
     val aspectFixes: StateFlow<Map<Long, Pair<Long, Float>>> = app.db.media().observeAspects()

@@ -432,6 +432,8 @@ def export_easyocr(report):
     err = check_close("craft", sess.run(None, {"image": x})[0], want, 1e-3)
     report.append(f"craft: max |ONNX - PyTorch| = {err:.2e}")
 
+    export_craft_half(report)
+
     rec = Model(input_channel=1, output_channel=256, hidden_size=256, num_class=97)
     sd = load_pth(SOURCES["english_g2"]["local"])
     rec.load_state_dict(sd)
@@ -448,6 +450,67 @@ def export_easyocr(report):
     report.append(f"english_g2: max |ONNX - PyTorch| = {worst:.2e}")
 
 
+def export_craft_half(report):
+    """craft_fp16.onnx: CRAFT computing in float16, for a phone's GPU (an Adreno runs it five
+    times as fast as float32, in half the memory). Its weights stay where craft.onnx points, as
+    float32 in the official file, and are cast inside the graph (ONNX Runtime folds the casts when
+    it opens the session); the image in and the scores out stay float32."""
+    from onnxconverter_common import float16
+
+    src = ASSETS / "craft" / "craft.onnx"
+    refs = {i.name: i for i in onnx.load(str(src), load_external_data=False).graph.initializer}
+    # The weights read by hand: onnx refuses a file with several hard links (the staging one).
+    loaded = onnx.load(str(src), load_external_data=False)
+    blob = Path(SOURCES["craft"]["local"]).read_bytes()
+    for init in loaded.graph.initializer:
+        if init.data_location == TensorProto.EXTERNAL:
+            info = {e.key: e.value for e in init.external_data}
+            off, length = int(info["offset"]), int(info["length"])
+            init.raw_data = blob[off:off + length]
+            init.data_location = TensorProto.DEFAULT
+            del init.external_data[:]
+    half = float16.convert_float_to_float16(loaded, keep_io_types=True)
+
+    # Every float32 weight the conversion turned into float16 goes back to its reference, cast.
+    inits, casts, renamed = [], [], {}
+    for init in half.graph.initializer:
+        ref = refs.get(init.name)
+        if (ref is not None and init.data_type == TensorProto.FLOAT16 and ref.data_type == TensorProto.FLOAT
+                and ref.data_location == TensorProto.EXTERNAL):
+            inits.append(ref)
+            renamed[init.name] = init.name + "_fp16"
+            casts.append(onnx.helper.make_node("Cast", [init.name], [renamed[init.name]],
+                                               name=init.name + "_to_fp16", to=TensorProto.FLOAT16))
+        else:
+            inits.append(init)
+    for node in half.graph.node:
+        for i, name in enumerate(node.input):
+            if name in renamed:
+                node.input[i] = renamed[name]
+    nodes = casts + list(half.graph.node)
+    del half.graph.node[:]
+    half.graph.node.extend(nodes)
+    del half.graph.initializer[:]
+    half.graph.initializer.extend(inits)
+    dest = ASSETS / "craft" / "craft_fp16.onnx"
+    onnx.save(half, str(dest))
+    staged = STAGING / "craft" / "craft_fp16.onnx"
+    staged.write_bytes(dest.read_bytes())
+    inline = sum(len(numpy_helper.to_array(i).tobytes()) for i in inits if i.data_location != TensorProto.EXTERNAL)
+    report.append(f"craft/craft_fp16.onnx: {dest.stat().st_size} bytes, {inline} inline, {len(casts)} weights cast")
+
+    # Against float32 on an image-like input: float16 keeps about three significant digits.
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((1, 3, 256, 384)).astype(np.float32)
+    want = session(STAGING / "craft" / "craft.onnx").run(None, {"image": x})[0]
+    got = session(staged).run(None, {"image": x})[0]
+    err = float(np.abs(got - want).max())
+    scale = float(np.abs(want).max())
+    if err > 0.02 * scale:
+        raise SystemExit(f"craft_fp16: max |fp16 - fp32| = {err:.2e}, scores up to {scale:.2e}")
+    report.append(f"craft_fp16: max |fp16 - fp32| = {err:.2e} (scores up to {scale:.2e})")
+
+
 # ------------------------------------------------------------------------ main
 
 def main():
@@ -455,9 +518,13 @@ def main():
     for key, src in SOURCES.items():
         if not Path(src["local"]).exists():
             raise SystemExit(f"{key}: no local copy at {src['local']} (run thumbsup2 with AI on once)")
-    export_minilm(report)
-    export_easyocr(report)
-    export_blip(report)
+    if "--craft-half" in sys.argv:
+        # Only the float16 detector, from the craft.onnx already exported.
+        export_craft_half(report)
+    else:
+        export_minilm(report)
+        export_easyocr(report)
+        export_blip(report)
 
     # Both models tokenize with bert-base-uncased's vocabulary; the app ships it once.
     vocabs = {p.read_bytes() for p in HF.glob("models--*/snapshots/*/vocab.txt")

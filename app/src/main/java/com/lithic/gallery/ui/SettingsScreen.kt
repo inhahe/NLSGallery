@@ -41,6 +41,7 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
     BackHandler(onBack = onBack)
     val s by vm.settings.collectAsState()
     val ai by vm.aiStatus.collectAsState()
+    val gpu by vm.gpuAvailable.collectAsState()
     fun set(change: (Settings) -> Settings) = vm.updateSettings(change)
     Scaffold(topBar = {
         TopAppBar(
@@ -110,6 +111,11 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
             )) {
                 Choice(label, about, s.textDetail == detail) { set { it.copy(textDetail = detail) } }
             }
+            Toggle("Read text on the GPU",
+                if (gpu) "This phone's Snapdragon GPU finds text about five times as fast. In half precision: " +
+                    "now and then a word reads differently from thumbsup2's"
+                else "This phone has no GPU the text reader runs on: it uses the processor",
+                s.gpuText && gpu, enabled = gpu) { v -> set { it.copy(gpuText = v) } }
             SliderRow("Processor threads", if (s.aiThreads == 0) "automatic" else "${s.aiThreads}",
                 s.aiThreads.toFloat(), 0f..8f, steps = 7) { v -> set { it.copy(aiThreads = v.roundToInt()) } }
 
@@ -134,9 +140,9 @@ private fun Hint(text: String) {
 }
 
 @Composable
-private fun Toggle(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun Toggle(title: String, subtitle: String?, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clickable(enabled = enabled) { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -144,7 +150,7 @@ private fun Toggle(title: String, subtitle: String?, checked: Boolean, onChange:
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 

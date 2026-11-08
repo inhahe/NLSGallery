@@ -77,4 +77,22 @@ class EasyOcrTest {
     @Test fun detectsTheSameBoxesOnAShrunkCanvas() = boxes("ocr_canvas448.json", 448)
 
     @Test fun readsTheSameTextOnAShrunkCanvas() = text("ocr_canvas448.json", 448)
+
+    /**
+     * The path a phone's GPU takes, on the CPU: every input through a session of its own fixed
+     * shape, tiled to the accelerator's smaller budget. The text is still EasyOCR's.
+     */
+    @Test
+    fun fixedShapeSessionsReadTheSameText() {
+        val o = ocr!!
+        o.accelerator = com.lithic.gallery.core.ai.Accelerator { } // adds no provider: the CPU, shapes fixed
+        o.acceleratedFrom = 0
+        try {
+            assertWithMessage("the CPU agrees with itself").that(o.acceleratorAgrees()).isTrue()
+            text("ocr.json", EasyOcr.DEFAULT_CANVAS)
+        } finally {
+            o.accelerator = null
+            o.acceleratedFrom = EasyOcr.DEFAULT_ACCELERATED_FROM
+        }
+    }
 }

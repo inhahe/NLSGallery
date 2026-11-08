@@ -40,7 +40,17 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         BertTokenizer(context.assets.open("models/vocab.txt").bufferedReader().readLines())
     }
 
-    private data class Config(val captions: Boolean, val ocr: Boolean, val threads: Int)
+    private data class Config(val captions: Boolean, val ocr: Boolean, val threads: Int, val gpu: Boolean)
+
+    /**
+     * Whether the GPU computes the text detector as the CPU does on this phone: asked once a
+     * process (a driver can run a graph and get it wrong, as Adreno does BLIP's encoder), and
+     * false from the first time it fails.
+     */
+    private var gpuAgrees: Boolean? = null
+
+    /** Whether this phone has a GPU the text detector can run on (a Snapdragon's). */
+    fun gpuAvailable(): Boolean = SnapdragonGpu.accelerator(ai.onnxruntime.OrtEnvironment.getEnvironment()) != null
 
     /** Whether the models for these settings are downloaded. */
     fun ready(s: Settings): Boolean =
@@ -314,25 +324,52 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
     }
 
     private fun open(captions: Boolean, ocr: Boolean, s: Settings) {
-        val want = Config(captions, ocr, s.aiThreads)
+        val want = Config(captions, ocr, s.aiThreads, ocr && s.gpuText)
         if (want == config) return
         closeModels()
         val o = Onnx(models.store, OnnxOptions(threads = s.aiThreads))
         onnx = o
         if (captions) blip = BlipCaptioner(o, tokenizer)
-        if (ocr) easyOcr = EasyOcr(o).also { it.maxTilePixels = maxTilePixels() }
+        if (ocr) easyOcr = EasyOcr(o).also {
+            it.maxTilePixels = maxTilePixels()
+            if (want.gpu) useGpu(it, o)
+        }
         minilm = MiniLmEmbedder(o, tokenizer)
         config = want
     }
 
-    /**
-     * The most pixels the text detector runs at once: it needs ~1.3 KB per pixel (3.5 GB for a
-     * whole screenshot), so phones with less memory cut images into more, smaller tiles.
-     */
-    private fun maxTilePixels(): Long {
+    /** The phone's memory, in bytes. */
+    private fun totalMemory(): Long {
         val mi = android.app.ActivityManager.MemoryInfo()
         context.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(mi)
-        return if (mi.totalMem >= 7L shl 30) EasyOcr.DEFAULT_MAX_TILE_PIXELS else 1_200_000L
+        return mi.totalMem
+    }
+
+    /**
+     * The most pixels the text detector runs at once on the CPU: it needs ~1.3 KB per pixel
+     * (3.5 GB for a whole screenshot), so phones with less memory cut images into more, smaller tiles.
+     */
+    private fun maxTilePixels(): Long = if (totalMemory() >= 7L shl 30) EasyOcr.DEFAULT_MAX_TILE_PIXELS else 1_200_000L
+
+    /** Hands [ocr]'s text detector to the GPU, if there is one and it computes it right. */
+    private fun useGpu(ocr: EasyOcr, onnx: Onnx) {
+        if (gpuAgrees == false) return
+        val gpu = SnapdragonGpu.accelerator(onnx.env) ?: return
+        ocr.acceleratedCachePixels = gpuPixels(totalMemory())
+        ocr.acceleratedMaxTilePixels = ocr.acceleratedCachePixels
+        ocr.accelerator = gpu
+        if (gpuAgrees == null) {
+            gpuAgrees = ocr.acceleratorAgrees()
+            Log.i(TAG, "the GPU ${if (gpuAgrees == true) "agrees with" else "differs from"} the CPU on the text detector")
+        }
+        if (gpuAgrees != true) {
+            ocr.accelerator = null
+            return
+        }
+        ocr.onAcceleratorFailed = { e ->
+            Log.w(TAG, "the GPU failed; text is read on the CPU from now on", e)
+            gpuAgrees = false
+        }
     }
 
     /** Closes the models, freeing their memory (about 1.5 GB with all of them open). */
@@ -348,6 +385,20 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     companion object {
         private const val TAG = "AiEngine"
+
+        /**
+         * The input pixels the GPU's text detector sessions may hold open together on a phone
+         * with [totalMemory] bytes (what Android reports: about 10.9 GiB for 12 GB, 7.3 for 8 GB).
+         * A session holds ~1.8 KB per pixel (float16; on an Adreno 730, 1.70-1.83 KB): on a 12 GB
+         * phone the CPU's whole-screenshot budget, 4.9 GB; 2.9 GB on an 8 GB one. One tile may
+         * use it all, as describing meets the shapes in runs (screenshots, then downloads...).
+         */
+        fun gpuPixels(totalMemory: Long): Long = when {
+            totalMemory >= 10L shl 30 -> EasyOcr.DEFAULT_MAX_TILE_PIXELS
+            totalMemory >= 7L shl 30 -> 1_600_000L
+            else -> 800_000L
+        }
+
         /** How many files a probe tries before it gives no answer. */
         private const val REFERENCE_TRIES = 3
 
