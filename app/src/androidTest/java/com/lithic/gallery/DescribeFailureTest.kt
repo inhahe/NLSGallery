@@ -295,7 +295,13 @@ class DescribeFailureTest {
         try {
             app.db.media().upsert(listOf(media))
             dao.saveDescribed(DescriptionEntity(key, "a bird", null, "", Long.MAX_VALUE / 2, null), null)
-            assertThat(dao.captionedReferences(1).single().aiKey).isEqualTo(key)
+            val references = dao.captionedReferences(AiEngine.REFERENCE_TRIES)
+            assertThat(references.first().aiKey).isEqualTo(key)
+            // One after it must be readable now: the library may list files deleted since its last
+            // sync, which the probe passes over too, and then has nothing to try.
+            assumeTrue("no other described picture can be read now", references.drop(1).any { m ->
+                runCatching { context.contentResolver.openInputStream(m.contentUri)?.use { true } }.getOrNull() == true
+            })
             assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
         } finally {
             app.db.media().delete(listOf(media.id))

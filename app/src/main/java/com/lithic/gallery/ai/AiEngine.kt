@@ -466,7 +466,7 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
         }
 
         /** How many files a probe tries before it gives no answer. */
-        private const val REFERENCE_TRIES = 3
+        internal const val REFERENCE_TRIES = 3
 
         /** Text that fills MiniLM's 256 tokens, the most it reads: as heavy as any description. */
         private val PROBE_TEXT = List(300) { "photograph" }.joinToString(" ")
