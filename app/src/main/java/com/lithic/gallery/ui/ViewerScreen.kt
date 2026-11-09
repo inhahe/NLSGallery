@@ -62,6 +62,7 @@ import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.search.SearchService
 import me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage
 import java.util.Date
+import kotlinx.coroutines.flow.map
 
 /** Full-screen photos and videos, swiped through in the order they were listed. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -132,7 +133,7 @@ private fun ViewerChrome(
 ) {
     val context = LocalContext.current
     val description by remember(item.aiKey) { vm.description(item) }.collectAsState(null)
-    val redescribing by remember(item.id) { vm.redescribing(item) }.collectAsState(false)
+    val redescribing by remember(item.id) { vm.redescribing(item).map { it.going } }.collectAsState(false)
     val ai by vm.aiStatus.collectAsState()
     Box(Modifier.fillMaxSize()) {
         Row(

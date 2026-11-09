@@ -27,6 +27,7 @@ import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.work.Work
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -88,6 +90,9 @@ data class AiStatus(
     /** What automatic describing does on battery, for the dialog to say why files wait. */
     val onBattery: OnBattery = OnBattery.NEW_ONLY,
 )
+
+/** Describing one file afresh: [going] while it waits or goes; [problem], why the last time left it as it was. */
+data class Redescribe(val going: Boolean = false, val problem: String? = null)
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -475,9 +480,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             onBatteryChanges.withLock {
                 if (app.settings.current().onBattery == rule) return@withLock
-                app.settings.update { it.copy(onBattery = rule) }
-                val s = app.settings.current()
-                Work.replan(app, rule, automatic = (s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s))
+                // Made whole even if the screen is left meanwhile: half of it would leave the runs
+                // planned for neither rule.
+                withContext(NonCancellable) {
+                    app.settings.update { it.copy(onBattery = rule) }
+                    val s = app.settings.current()
+                    Work.replan(app, rule, automatic = (s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s))
+                }
             }
         }
     }
@@ -515,9 +524,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /** Describes [item] afresh, at once, beside any run going; its description stays until the new one is saved. */
     fun redescribe(item: MediaEntity) = Work.describeFile(app, item)
 
-    /** Whether [item] is being described afresh ([redescribe]), or waits to be. */
-    fun redescribing(item: MediaEntity): Flow<Boolean> =
-        workManager.getWorkInfosForUniqueWorkFlow(Work.fileWork(item.id)).map { infos -> infos.any { !it.state.isFinished } }
+    /**
+     * Where describing [item] afresh ([redescribe]) stands: whether it waits or goes, and why the
+     * last time left it as it was.
+     */
+    fun redescribing(item: MediaEntity): Flow<Redescribe> =
+        workManager.getWorkInfosForUniqueWorkFlow(Work.fileWork(item.id)).map { infos ->
+            val going = infos.any { !it.state.isFinished }
+            Redescribe(going, if (going) null else infos.firstNotNullOfOrNull { it.outputData.getString(Work.KEY_ERROR) })
+        }
 
     /** Retries the files describing failed on. */
     fun retryFailures() {

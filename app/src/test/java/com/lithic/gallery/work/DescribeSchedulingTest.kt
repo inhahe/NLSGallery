@@ -146,6 +146,15 @@ class DescribeSchedulingTest {
     }
 
     @Test
+    fun whatWaitsAlreadyIsLeftAlone() {
+        // Every new photo asks again while a run waits for the battery: it stays as it is.
+        request(Run.BATTERY)
+        val first = waiting().single().id
+        request(Run.BATTERY)
+        assertThat(waiting().map { it.id }).containsExactly(first)
+    }
+
+    @Test
     fun withNoneGoingWhatWaitsIsReplacedByTheMergedRequest() {
         request(Run.CHARGER)
         assertThat(waiting().map(::kind)).containsExactly(Run.CHARGER)
@@ -287,7 +296,7 @@ class DescribeSchedulingTest {
         // user's, which would describe everything at once on battery.
         legacy(Work.constraints(Run.CHARGER), ExistingWorkPolicy.REPLACE)
         request(Run.CHARGER)
-        assertThat(waiting().map(::kind)).containsExactly(Run.CHARGER)
+        assertThat(waiting().single().constraints.requiresCharging()).isTrue()
         // One the user asked for, behind a run going: still theirs.
         Work.stopDescribing(context)
         request(Run.USER)

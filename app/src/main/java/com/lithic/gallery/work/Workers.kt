@@ -15,6 +15,7 @@ import androidx.concurrent.futures.await
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
@@ -36,6 +37,7 @@ import com.lithic.gallery.data.MediaScanner
 import com.lithic.gallery.data.OnBattery
 import com.lithic.gallery.data.Settings
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -106,6 +108,8 @@ object Work {
     private const val NOTIFY_DESCRIBE = 1
     private const val NOTIFY_DOWNLOAD = 2
     private const val TAG = "Work"
+    /** Times [request] looks again at runs changing under it (50 ms apart) before queueing after them. */
+    private const val PLACING_TRIES = 100
 
     /** One request placed at a time: each reads the runs, then changes them. */
     private val requests = Mutex()
@@ -129,11 +133,15 @@ object Work {
     internal suspend fun request(context: Context, kind: Run) {
         val wm = WorkManager.getInstance(context)
         requests.withLock {
-            // The one waiting may start between reading it and changing it: then look again.
-            repeat(3) {
+            // The one waiting may start or end between reading it and changing it: then look again
+            // (something moved on each time, so this ends).
+            var merged = kind
+            repeat(PLACING_TRIES) {
                 val infos = wm.infos(DESCRIBE)
                 val waiting = infos.filter { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
-                val merged = merge(waiting.map(::kindOf) + kind)
+                merged = merge(waiting.map(::kindOf) + kind)
+                // What waits serves this request already: left as it is.
+                if (waiting.isNotEmpty() && waiting.all { kindOf(it) == merged }) return
                 if (infos.none { it.state == WorkInfo.State.RUNNING }) {
                     wm.enqueueUniqueWork(DESCRIBE, ExistingWorkPolicy.REPLACE, describeRequest(merged)).await()
                     return
@@ -146,8 +154,11 @@ object Work {
                         kindOf(it) == merged ||
                             wm.updateWork(describeRequest(merged, it.id)).await() == WorkManager.UpdateResult.APPLIED_IMMEDIATELY
                     }) return
+                delay(50)
             }
-            Log.w(TAG, "a describe request ($kind) found the runs changing under it; the next one places it")
+            // Never dropped (a user's request has no next one): queued after the rest.
+            Log.w(TAG, "a describe request ($kind) found the runs changing under it; queued after them")
+            wm.enqueueUniqueWork(DESCRIBE, ExistingWorkPolicy.APPEND_OR_REPLACE, describeRequest(merged)).await()
         }
     }
 
@@ -599,20 +610,33 @@ class DescribeFileWorker(context: Context, params: WorkerParameters) : Coroutine
         val s = app.settings.current()
         if (!app.ai.ready(s)) return Result.success()
         val item = app.db.media().byId(inputData.getLong(Work.KEY_MEDIA, -1)) ?: return Result.success()
-        app.ai.session {
+        val problem = app.ai.session {
             try {
+                var problem: String? = null
                 for (part in listOf(AiEngine.Part.CAPTIONS, AiEngine.Part.TEXT)) {
                     val captions = part == AiEngine.Part.CAPTIONS
                     if (if (captions) !s.captions else !s.ocr) continue
                     val outcome = app.ai.describe(item, s, captions = captions, ocr = !captions, again = true)
                     Log.i(TAG, "file ${item.id}, ${part.phase}: $outcome")
-                    if (outcome != AiEngine.Outcome.Described) break
+                    problem = problem(outcome) ?: continue
+                    break
                 }
+                problem
             } finally {
                 app.search.invalidate()
             }
         }
-        return Result.success()
+        // Said in the file's details ([Work.KEY_ERROR]).
+        return Result.success(if (problem == null) Data.EMPTY else workDataOf(Work.KEY_ERROR to problem))
+    }
+
+    /** Why [outcome] left the file as it was, in words for its details; null when it was described. */
+    private fun problem(outcome: AiEngine.Outcome): String? = when (outcome) {
+        AiEngine.Outcome.Described -> null
+        AiEngine.Outcome.Skipped -> "it could not be opened just now"
+        AiEngine.Outcome.Failed -> "it could not be read"
+        AiEngine.Outcome.ModelsUnavailable -> "the AI could not start; try again later"
+        is AiEngine.Outcome.ModelsFailed -> "the AI failed on it; try again later"
     }
 
     private companion object { const val TAG = "DescribeFileWorker" }

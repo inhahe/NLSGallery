@@ -223,10 +223,14 @@ fun MediaDetails(item: MediaEntity, hit: SearchService.Result?, vm: GalleryViewM
             }
         }
         if (ai.ready) {
-            val redescribing by remember(item.id) { vm.redescribing(item) }.collectAsState(false)
+            val again by remember(item.id) { vm.redescribing(item) }.collectAsState(Redescribe())
+            again.problem?.let {
+                Text("Describing it again did not finish: $it.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
             Row {
-                TextButton(onClick = { vm.redescribe(item) }, enabled = !redescribing) {
-                    Text(if (redescribing) "Describing…" else if (d == null) "Describe now" else "Describe again")
+                TextButton(onClick = { vm.redescribe(item) }, enabled = !again.going) {
+                    Text(if (again.going) "Describing…" else if (d == null) "Describe now" else "Describe again")
                 }
             }
         }

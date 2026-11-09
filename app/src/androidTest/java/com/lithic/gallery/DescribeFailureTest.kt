@@ -1,5 +1,6 @@
 package com.lithic.gallery
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -15,6 +16,11 @@ import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
+import com.lithic.gallery.work.DescribeFileWorker
+import com.lithic.gallery.work.Work
+import androidx.work.ListenableWorker
+import androidx.work.testing.TestListenableWorkerBuilder
+import androidx.work.workDataOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -96,6 +102,38 @@ class DescribeFailureTest {
             }
         } finally {
             app.ai.release()
+            erase(key)
+        }
+    }
+
+    @Test
+    fun aFileDescribedAgainSaysWhyWhenItIsNot() = runBlocking {
+        suspend fun describeAgain(media: MediaEntity): ListenableWorker.Result {
+            app.db.media().upsert(listOf(media))
+            try {
+                return TestListenableWorkerBuilder<DescribeFileWorker>(app)
+                    .setInputData(workDataOf(Work.KEY_MEDIA to media.id)).build().doWork()
+            } finally {
+                app.db.media().delete(listOf(media.id))
+            }
+        }
+        val key = "describe-failure-test-file-${System.nanoTime()}"
+        try {
+            withPicture { uri ->
+                val result = describeAgain(item(uri, key).copy(id = ContentUris.parseId(uri)))
+                assertThat(result).isEqualTo(ListenableWorker.Result.success())
+                assertThat(dao.description(key)!!.caption).isNotEmpty()
+            }
+            // One that cannot be opened: said, and its description left as it was.
+            val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                .buildUpon().appendPath("2147483000").build()
+            val before = dao.description(key)
+            val result = describeAgain(item(gone, key).copy(id = 2147483000L))
+            assertThat((result as ListenableWorker.Result.Success).outputData.getString(Work.KEY_ERROR))
+                .isEqualTo("it could not be opened just now")
+            assertThat(dao.description(key)).isEqualTo(before)
+            assertThat(app.ai.modelsOpen()).isFalse()
+        } finally {
             erase(key)
         }
     }

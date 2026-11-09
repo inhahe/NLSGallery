@@ -209,7 +209,8 @@ in Telephoto's `ZoomableAsyncImage` (sub-sampled tiles for huge images), videos 
 ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 (`MediaStore.createTrashRequest`, API 30+; delete with the RecoverableSecurityException flow on
 29), details sheet (dates, file, AI description, OCR text, own caption, why a search hit matched),
-"Describe again" (`Work.describeFile`: "Describing…" while its work waits or goes). A long press on a thumbnail opens `MediaSheet`: the file's name and folder
+"Describe again" (`Work.describeFile`: "Describing…" while its work waits or goes, and why,
+when it left the file as it was: `Redescribe`, from the work's output). A long press on a thumbnail opens `MediaSheet`: the file's name and folder
 (selectable), open, share, delete, edit, open with, copy name, and the same details. The viewer
 and the sheet share `MediaActions` (the intents; the trash flow, after which the library is
 synced) and `MediaDetails`.
@@ -521,7 +522,9 @@ own DataStore, since it changes with every file. A run on battery that leaves fi
 
 The "describe" chain holds a run going and at most one waiting after it (a run's lists are made
 as it starts; the one waiting takes what is added or reset meanwhile). `Work.request` places a
-request under a mutex: with none going it replaces what waits; with one going it is appended, or
+request under a mutex, never dropping it: what waits and serves it already is left alone (no
+cancel and re-queue at every new photo); otherwise, with none going, it replaces what waits; with
+one going it is appended, or
 merged into the one waiting (`WorkManager.updateWork`, which keeps its place in the chain) as
 `Work.merge` says: the user's over the others, so a user's request is never dropped or delayed by
 an automatic run's constraints; one on battery over the charger's, so new files never wait
@@ -529,7 +532,7 @@ behind a charger run (the run on battery queues the charger's again for the rest
 charger run is stopped (`DescribeWorker` checks as it ends), not cancelled, and the phone no
 longer charges (`BatteryManager.isCharging`, Android's job scheduling's notion), it was
 unplugged: unless the rule is *Nothing*, `Work.chargerRunStopped` replaces it, and what waited
-behind it, with a run on battery. Changing the rule (`Work.replan`, one change at a time) starts
+behind it, with a run on battery. Changing the rule (`Work.replan`, one change at a time, made whole even if the screen is left) starts
 a run on battery that is going again, makes the automatic runs waiting what the new rule asks
 for (a charger run going goes on as it is), and turns a queued `ChargerWorker` into an automatic
 request out of *New photos only*, when describing is automatic at all. Stop, in the AI dialog

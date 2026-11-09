@@ -223,4 +223,5 @@ dependencies {
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.truth)
     androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.androidx.work.testing)
 }

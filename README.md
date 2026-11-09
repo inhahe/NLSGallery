@@ -53,7 +53,7 @@ tap a video to play it. The top bar has details (date, place, file, size, the AI
 the text found in the picture), share, move to trash, and Edit / Open with another app. Its menu
 (and the details) has *Describe again* (*Describe now* for a picture not yet described): the
 picture is described at once, even while a long run is going, and keeps its old description
-until the new one is ready.
+until the new one is ready (if it cannot be, the details say why).
 
 ## AI descriptions and search
 
