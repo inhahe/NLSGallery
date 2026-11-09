@@ -30,7 +30,7 @@ class AiDaoTest {
 
     private fun embedding(key: String) = EmbeddingEntity(key, "m", ByteArray(8), "t$key")
 
-    /** Description [key] and its embeddings gone, as no part of the app does any more (a guard stays for it). */
+    /** Description [key] and its embeddings deleted: the guards against a description vanishing hold. */
     private fun erase(key: String) {
         db.openHelper.writableDatabase.execSQL("DELETE FROM ai_descriptions WHERE hash = ?", arrayOf(key))
         db.openHelper.writableDatabase.execSQL("DELETE FROM ai_embeddings WHERE hash = ?", arrayOf(key))

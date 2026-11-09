@@ -4,6 +4,8 @@ import android.app.Application
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
@@ -27,7 +29,6 @@ import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.work.Work
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
@@ -49,7 +50,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -91,8 +91,14 @@ data class AiStatus(
     val onBattery: OnBattery = OnBattery.NEW_ONLY,
 )
 
-/** Describing one file afresh: [going] while it waits or goes; [problem], why the last time left it as it was. */
-data class Redescribe(val going: Boolean = false, val problem: String? = null)
+/**
+ * Describing one file afresh: [going] while it waits or goes; [problem], why the last time left it
+ * as it was, which holds while its description is still the one written at [describedAt] (0: none).
+ */
+data class Redescribe(val going: Boolean = false, val problem: String? = null, val describedAt: Long = 0) {
+    /** [problem], unless the file was described since: [now] is its description's describedAt (0: none). */
+    fun problemWith(now: Long): String? = problem?.takeIf { now == describedAt }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -291,7 +297,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             downloadDone = dl?.progress?.getLong(Work.KEY_DONE, 0) ?: 0,
             downloadTotal = dl?.progress?.getLong(Work.KEY_TOTAL, 0) ?: 0,
             downloadError = if (dl == null) dlFailed?.outputData?.getString(Work.KEY_ERROR) else null,
-            automatic = s.describeNewMedia || s.describeOnOpen,
+            automatic = s.describesByItself,
             onBattery = s.onBattery,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AiStatus())
@@ -472,21 +478,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { app.settings.update(change) }
     }
 
-    /** One change of "On battery" at a time, so the runs are planned by the last one chosen. */
-    private val onBatteryChanges = Mutex()
-
-    /** Sets "On battery"; what is queued or going is planned again by it. */
+    /**
+     * Sets "On battery"; what is queued or going is planned again by it. In the process's scope,
+     * not the screen's: a change cut short, or one waiting behind another dropped, would leave the
+     * runs planned for a rule not chosen last.
+     */
     fun setOnBattery(rule: OnBattery) {
-        viewModelScope.launch {
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
             onBatteryChanges.withLock {
                 if (app.settings.current().onBattery == rule) return@withLock
-                // Made whole even if the screen is left meanwhile: half of it would leave the runs
-                // planned for neither rule.
-                withContext(NonCancellable) {
-                    app.settings.update { it.copy(onBattery = rule) }
-                    val s = app.settings.current()
-                    Work.replan(app, rule, automatic = (s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s))
-                }
+                app.settings.update { it.copy(onBattery = rule) }
+                val s = app.settings.current()
+                Work.replan(app, rule, automatic = s.describesByItself && app.ai.ready(s))
             }
         }
     }
@@ -531,7 +534,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun redescribing(item: MediaEntity): Flow<Redescribe> =
         workManager.getWorkInfosForUniqueWorkFlow(Work.fileWork(item.id)).map { infos ->
             val going = infos.any { !it.state.isFinished }
-            Redescribe(going, if (going) null else infos.firstNotNullOfOrNull { it.outputData.getString(Work.KEY_ERROR) })
+            val done = infos.firstOrNull { it.state.isFinished }?.outputData
+            Redescribe(going, if (going) null else done?.getString(Work.KEY_ERROR), done?.getLong(Work.KEY_DESCRIBED_AT, 0L) ?: 0L)
         }
 
     /** Retries the files describing failed on. */
@@ -550,6 +554,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private companion object {
         const val TAG = "GalleryViewModel"
+
+        /** One change of "On battery" at a time in the process, so the runs are planned by the last one chosen. */
+        val onBatteryChanges = Mutex()
         /** How far back the pass's speed is taken from: describing slows as the phone warms. */
         const val ETA_WINDOW_MS = 5 * 60_000L
     }

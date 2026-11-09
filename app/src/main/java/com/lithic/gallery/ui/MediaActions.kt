@@ -224,8 +224,8 @@ fun MediaDetails(item: MediaEntity, hit: SearchService.Result?, vm: GalleryViewM
         }
         if (ai.ready) {
             val again by remember(item.id) { vm.redescribing(item) }.collectAsState(Redescribe())
-            again.problem?.let {
-                Text("Describing it again did not finish: $it.", style = MaterialTheme.typography.bodySmall,
+            again.problemWith(d?.describedAt ?: 0L)?.let {
+                Text("Describing it did not finish: $it.", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error)
             }
             Row {

@@ -494,7 +494,7 @@ and greys the toggle out where there is none.
 | Work | When | Constraints |
 |---|---|---|
 | `DescribeWorker` (unique "describe") | AI button; app start if "Describe the rest when the app opens"; after a model download; after new media (by `NewMediaWorker`, or with the app open by its own sync, which takes the new files first); `ChargerWorker` | by its `Run` (the request's tag): user none; battery: battery not low; charger: that and charging |
-| `DescribeFileWorker` (unique "describe-file-<media id>", tag "describe-file") | "Describe now" / "Describe again" on one file: describes it afresh (`AiEngine.describe(again = true)`, the old description kept until the new one is saved), beside any describe run (`AiEngine`'s lock takes them a file at a time; the models stay open if a run is going), so it never waits for a run to end; each file its own work, so one failing holds up no other | none |
+| `DescribeFileWorker` (unique "describe-file-<media id>", tag "describe-file") | "Describe now" / "Describe again" on one file: describes it afresh, caption then text (`AiEngine.describe(again = true)`, the old description kept until the new one is saved), beside any describe run (`AiEngine`'s lock takes them a file at a time; under an `AiEngine.session`, so the models stay open while a run holds one too), so it never waits for a run to end; each file its own work, so one failing holds up no other; why it left the file as it was goes in its output (`KEY_ERROR`, with the description's `KEY_DESCRIBED_AT`: said in the details until the file is described again) | none |
 | `ChargerWorker` (unique "describe-on-charger") | queued (replacing) by a run on battery that left files, in *New photos only*: asks for a charger run once the phone is plugged in | charging, battery not low |
 | `NewMediaWorker` (unique "media-trigger") | MediaStore content-URI trigger (images + video, 5 s update delay, 1 min max), re-armed after each run; armed while "Describe new photos as they arrive" is on | none |
 | `ModelDownloadWorker` (unique "download-models") | Models screen | network (unmetered if "Only over Wi-Fi") |
@@ -523,7 +523,8 @@ own DataStore, since it changes with every file. A run on battery that leaves fi
 The "describe" chain holds a run going and at most one waiting after it (a run's lists are made
 as it starts; the one waiting takes what is added or reset meanwhile). `Work.request` places a
 request under a mutex, never dropping it: what waits and serves it already is left alone (no
-cancel and re-queue at every new photo); otherwise, with none going, it replaces what waits; with
+cancel and re-queue at every new photo), unless it waits out a retry's backoff or was queued by
+an earlier build (rewritten tagged, so the run reads its kind as `Work.request` does); otherwise, with none going, it replaces what waits; with
 one going it is appended, or
 merged into the one waiting (`WorkManager.updateWork`, which keeps its place in the chain) as
 `Work.merge` says: the user's over the others, so a user's request is never dropped or delayed by
@@ -532,7 +533,7 @@ behind a charger run (the run on battery queues the charger's again for the rest
 charger run is stopped (`DescribeWorker` checks as it ends), not cancelled, and the phone no
 longer charges (`BatteryManager.isCharging`, Android's job scheduling's notion), it was
 unplugged: unless the rule is *Nothing*, `Work.chargerRunStopped` replaces it, and what waited
-behind it, with a run on battery. Changing the rule (`Work.replan`, one change at a time, made whole even if the screen is left) starts
+behind it, with a run on battery. Changing the rule (`Work.replan`, one change at a time, in the process's scope so none is cut short or dropped) starts
 a run on battery that is going again, makes the automatic runs waiting what the new rule asks
 for (a charger run going goes on as it is), and turns a queued `ChargerWorker` into an automatic
 request out of *New photos only*, when describing is automatic at all. Stop, in the AI dialog

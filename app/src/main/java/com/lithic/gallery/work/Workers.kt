@@ -15,7 +15,6 @@ import androidx.concurrent.futures.await
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
@@ -37,7 +36,6 @@ import com.lithic.gallery.data.MediaScanner
 import com.lithic.gallery.data.OnBattery
 import com.lithic.gallery.data.Settings
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -101,6 +99,8 @@ object Work {
     const val KEY_KEYS = "keys"
     /** The media id of the file a [DescribeFileWorker] describes. */
     const val KEY_MEDIA = "media"
+    /** When the description a [DescribeFileWorker] left was written (0: none): its problem is about that one. */
+    const val KEY_DESCRIBED_AT = "describedAt"
     const val KEY_ERROR = "error"
 
     const val CHANNEL_AI = "ai"
@@ -108,8 +108,8 @@ object Work {
     private const val NOTIFY_DESCRIBE = 1
     private const val NOTIFY_DOWNLOAD = 2
     private const val TAG = "Work"
-    /** Times [request] looks again at runs changing under it (50 ms apart) before queueing after them. */
-    private const val PLACING_TRIES = 100
+    /** Times [request] looks again at runs changing under it before queueing after them. */
+    private const val PLACING_TRIES = 5
 
     /** One request placed at a time: each reads the runs, then changes them. */
     private val requests = Mutex()
@@ -134,14 +134,16 @@ object Work {
         val wm = WorkManager.getInstance(context)
         requests.withLock {
             // The one waiting may start or end between reading it and changing it: then look again
-            // (something moved on each time, so this ends).
+            // (something moved on each time, so this settles within a few tries).
             var merged = kind
             repeat(PLACING_TRIES) {
                 val infos = wm.infos(DESCRIBE)
                 val waiting = infos.filter { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
                 merged = merge(waiting.map(::kindOf) + kind)
-                // What waits serves this request already: left as it is.
-                if (waiting.isNotEmpty() && waiting.all { kindOf(it) == merged }) return
+                // What waits serves this request already: left as it is. Not one waiting out a
+                // retry's backoff (up to hours: replaced, it starts at once), nor one an earlier
+                // build queued (made a tagged one, so the run reads its kind as this does).
+                if (waiting.isNotEmpty() && waiting.all { serves(it, merged) }) return
                 if (infos.none { it.state == WorkInfo.State.RUNNING }) {
                     wm.enqueueUniqueWork(DESCRIBE, ExistingWorkPolicy.REPLACE, describeRequest(merged)).await()
                     return
@@ -151,10 +153,9 @@ object Work {
                     return
                 }
                 if (waiting.all {
-                        kindOf(it) == merged ||
+                        serves(it, merged) ||
                             wm.updateWork(describeRequest(merged, it.id)).await() == WorkManager.UpdateResult.APPLIED_IMMEDIATELY
                     }) return
-                delay(50)
             }
             // Never dropped (a user's request has no next one): queued after the rest.
             Log.w(TAG, "a describe request ($kind) found the runs changing under it; queued after them")
@@ -167,6 +168,9 @@ object Work {
      * battery (it starts without the charger, and queues the charger's run for what it leaves).
      */
     internal fun merge(kinds: List<Run>): Run = kinds.min()
+
+    /** Whether request [info], waiting, serves a request of [kind] as it is: tagged so, and not waiting out a retry. */
+    private fun serves(info: WorkInfo, kind: Run): Boolean = runOf(info.tags) == kind && info.runAttemptCount == 0
 
     /** [Run] by the tags of its request; null for one queued before runs were tagged. */
     internal fun runOf(tags: Set<String>): Run? = Run.entries.firstOrNull { it.tag in tags }
@@ -287,7 +291,8 @@ object Work {
                 wm.enqueueUniqueWork(DESCRIBE, ExistingWorkPolicy.REPLACE, describeRequest(merge(live.map(::under)))).await()
             } else {
                 for (info in live) {
-                    if (info.state != WorkInfo.State.RUNNING && under(info) != kindOf(info)) {
+                    // One an earlier build queued is made a tagged one too.
+                    if (info.state != WorkInfo.State.RUNNING && runOf(info.tags) != under(info)) {
                         wm.updateWork(describeRequest(under(info), info.id)).await()
                     }
                 }
@@ -369,7 +374,7 @@ object Work {
     }
 
     /** @param phase "embeddings", "captions" or "text": which pass the run is in. */
-    internal fun describeNotification(context: Context, id: java.util.UUID, done: Int, total: Int, phase: String = "captions"): ForegroundInfo {
+    internal fun describeNotification(context: Context, done: Int, total: Int, phase: String = "captions"): ForegroundInfo {
         // Stop stops all describing, as the AI dialog's does, not this run alone.
         val cancel = PendingIntent.getBroadcast(context, 0, Intent(context, StopDescribingReceiver::class.java),
             PendingIntent.FLAG_IMMUTABLE)
@@ -457,7 +462,9 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         // On battery in "new photos only": the new files, up to the day's budget; the charger's
         // run takes the rest. Embeddings take milliseconds: always all.
         val budget = BatteryBudget(applicationContext).takeIf { scope == Scope.NEW }
-        val charged = budget?.charged(LocalDate.now()).orEmpty().toHashSet()
+        // A run counts against the day it started, past midnight too: its set is that day's.
+        val day = LocalDate.now()
+        val charged = budget?.charged(day).orEmpty().toHashSet()
         val plan = Work.plan(scope,
             if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false) else emptyList(),
             if (s.ocr) dao.withoutText(s.describeVideos) else emptyList(),
@@ -480,7 +487,7 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         var foreground = false
         if (user || total > 3) {
             foreground = try {
-                setForeground(Work.describeNotification(applicationContext, id, 0, total, firstPhase)); true
+                setForeground(Work.describeNotification(applicationContext, 0, total, firstPhase)); true
             } catch (e: IllegalStateException) {
                 Log.i(TAG, "not in the foreground: ${e.message}"); false
             }
@@ -500,7 +507,7 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             if (now - lastShown < 1000 && done < total) return
             lastShown = now
             report(phase)
-            if (foreground) setForeground(Work.describeNotification(applicationContext, id, done, total, phase))
+            if (foreground) setForeground(Work.describeNotification(applicationContext, done, total, phase))
         }
         /** A pass of [size] files begins: shown at once (a text pass's first file can take a minute). */
         suspend fun begin(part: AiEngine.Part, size: Int) {
@@ -520,7 +527,7 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         fun describing(part: AiEngine.Part) = DescribePass<MediaEntity>(
             attempt = {
                 if (budget != null && it.aiKey !in charged && !Work.charging(applicationContext)) {
-                    budget.use(LocalDate.now(), it.aiKey)
+                    budget.use(day, it.aiKey)
                     charged.add(it.aiKey)
                 }
                 app.ai.describe(it, s, captions = part == AiEngine.Part.CAPTIONS, ocr = part == AiEngine.Part.TEXT)
@@ -577,7 +584,7 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo =
-        Work.describeNotification(applicationContext, id, 0, 0)
+        Work.describeNotification(applicationContext, 0, 0)
 
     private companion object { const val TAG = "DescribeWorker" }
 }
@@ -590,7 +597,7 @@ class ChargerWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     override suspend fun doWork(): Result {
         val app = applicationContext as GalleryApp
         val s = app.settings.current()
-        if ((s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s)) Work.request(applicationContext, Run.CHARGER)
+        if (s.describesByItself && app.ai.ready(s)) Work.request(applicationContext, Run.CHARGER)
         return Result.success()
     }
 }
@@ -610,24 +617,24 @@ class DescribeFileWorker(context: Context, params: WorkerParameters) : Coroutine
         val s = app.settings.current()
         if (!app.ai.ready(s)) return Result.success()
         val item = app.db.media().byId(inputData.getLong(Work.KEY_MEDIA, -1)) ?: return Result.success()
+        val parts = listOfNotNull(AiEngine.Part.CAPTIONS.takeIf { s.captions }, AiEngine.Part.TEXT.takeIf { s.ocr })
         val problem = app.ai.session {
             try {
-                var problem: String? = null
-                for (part in listOf(AiEngine.Part.CAPTIONS, AiEngine.Part.TEXT)) {
+                // The first part left as it was ends it.
+                parts.firstNotNullOfOrNull { part ->
                     val captions = part == AiEngine.Part.CAPTIONS
-                    if (if (captions) !s.captions else !s.ocr) continue
-                    val outcome = app.ai.describe(item, s, captions = captions, ocr = !captions, again = true)
-                    Log.i(TAG, "file ${item.id}, ${part.phase}: $outcome")
-                    problem = problem(outcome) ?: continue
-                    break
+                    app.ai.describe(item, s, captions = captions, ocr = !captions, again = true)
+                        .also { Log.i(TAG, "file ${item.id}, ${part.phase}: $it") }
+                        .let(::problem)
                 }
-                problem
             } finally {
                 app.search.invalidate()
             }
-        }
-        // Said in the file's details ([Work.KEY_ERROR]).
-        return Result.success(if (problem == null) Data.EMPTY else workDataOf(Work.KEY_ERROR to problem))
+        } ?: return Result.success()
+        // Said in the file's details ([Work.KEY_ERROR]) while its description is the one left
+        // ([Work.KEY_DESCRIBED_AT]): described since, by a run, it no longer applies.
+        return Result.success(workDataOf(Work.KEY_ERROR to problem,
+            Work.KEY_DESCRIBED_AT to (app.db.ai().description(item.aiKey)?.describedAt ?: 0L)))
     }
 
     /** Why [outcome] left the file as it was, in words for its details; null when it was described. */

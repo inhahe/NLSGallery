@@ -152,6 +152,17 @@ class DescribeSchedulingTest {
         val first = waiting().single().id
         request(Run.BATTERY)
         assertThat(waiting().map { it.id }).containsExactly(first)
+
+        // But not one waiting out a retry's backoff (the models failed): asked again, a run
+        // starts at once.
+        Work.stopDescribing(context)
+        request(Run.USER)
+        val failed = running().single().id
+        going.remove(failed)!!.set(ListenableWorker.Result.retry())
+        assertThat(waiting().single().runAttemptCount).isEqualTo(1)
+        request(Run.USER)
+        assertThat(running().single().id).isNotEqualTo(failed)
+        assertThat(live().map { it.id }).doesNotContain(failed)
     }
 
     @Test
@@ -220,7 +231,7 @@ class DescribeSchedulingTest {
         request(Run.USER)
         request(Run.BATTERY)
         Work.describeFile(context, item("photo"))
-        val notification = Work.describeNotification(context, running().single().id, 0, 10).notification
+        val notification = Work.describeNotification(context, 0, 10).notification
         val stop = shadowOf(notification.actions.single { it.title == "Stop" }.actionIntent).savedIntent
         assertThat(stop.component?.className).isEqualTo(StopDescribingReceiver::class.java.name)
         StopDescribingReceiver().onReceive(context, stop)
@@ -296,7 +307,8 @@ class DescribeSchedulingTest {
         // user's, which would describe everything at once on battery.
         legacy(Work.constraints(Run.CHARGER), ExistingWorkPolicy.REPLACE)
         request(Run.CHARGER)
-        assertThat(waiting().single().constraints.requiresCharging()).isTrue()
+        // Made a tagged one, so the run reads its kind as the scheduler does.
+        assertThat(waiting().map(::kind)).containsExactly(Run.CHARGER)
         // One the user asked for, behind a run going: still theirs.
         Work.stopDescribing(context)
         request(Run.USER)
@@ -304,7 +316,7 @@ class DescribeSchedulingTest {
         val theirs = waiting().single()
         assertThat(theirs.tags.none { it.startsWith("run-") }).isTrue()
         request(Run.BATTERY)
-        assertThat(waiting().map { it.id to it.constraints }).containsExactly(theirs.id to Constraints.NONE)
+        assertThat(waiting().map { it.id to kind(it) }).containsExactly(theirs.id to Run.USER)
     }
 
     @Test

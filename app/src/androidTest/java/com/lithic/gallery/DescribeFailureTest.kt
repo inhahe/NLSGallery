@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
+import com.google.common.truth.Truth.assertWithMessage
 import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.data.DescriptionEntity
@@ -117,20 +118,25 @@ class DescribeFailureTest {
                 app.db.media().delete(listOf(media.id))
             }
         }
+        // The worker describes by the app's own settings.
+        val s = app.settings.current()
+        assumeTrue("the app's settings ask for no captions, or their models are missing", s.captions && app.ai.ready(s))
         val key = "describe-failure-test-file-${System.nanoTime()}"
         try {
             withPicture { uri ->
                 val result = describeAgain(item(uri, key).copy(id = ContentUris.parseId(uri)))
                 assertThat(result).isEqualTo(ListenableWorker.Result.success())
-                assertThat(dao.description(key)!!.caption).isNotEmpty()
+                assertWithMessage("described").that(dao.description(key)?.caption).isNotEmpty()
             }
             // One that cannot be opened: said, and its description left as it was.
             val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 .buildUpon().appendPath("2147483000").build()
             val before = dao.description(key)
             val result = describeAgain(item(gone, key).copy(id = 2147483000L))
-            assertThat((result as ListenableWorker.Result.Success).outputData.getString(Work.KEY_ERROR))
-                .isEqualTo("it could not be opened just now")
+            val output = (result as ListenableWorker.Result.Success).outputData
+            assertThat(output.getString(Work.KEY_ERROR)).isEqualTo("it could not be opened just now")
+            // About the description it left: so said only until the file is described again.
+            assertThat(output.getLong(Work.KEY_DESCRIBED_AT, -1)).isEqualTo(before!!.describedAt)
             assertThat(dao.description(key)).isEqualTo(before)
             assertThat(app.ai.modelsOpen()).isFalse()
         } finally {

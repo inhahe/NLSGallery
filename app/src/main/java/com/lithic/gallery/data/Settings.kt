@@ -110,7 +110,10 @@ data class Settings(
     /** The permission to read where photos were taken was asked for (the app asks once by itself; Settings again). */
     val locationAsked: Boolean = false,
     val searchCurrentTabOnly: Boolean = false,
-)
+) {
+    /** Whether anything describes by itself (new photos as they arrive, or the rest when the app opens). */
+    val describesByItself: Boolean get() = describeNewMedia || describeOnOpen
+}
 
 class SettingsStore(private val context: Context) {
     private val store: DataStore<Preferences> get() = context.dataStore
