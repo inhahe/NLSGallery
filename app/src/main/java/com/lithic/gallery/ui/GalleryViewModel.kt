@@ -394,8 +394,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         // MediaStore changes while the app is open: resync shortly after they settle.
         viewModelScope.launch {
             app.repository.changes().debounce(1000).collect {
-                app.repository.sync()
+                val r = app.repository.sync()
                 scans.trySend(Unit)
+                // What arrived describes as it would with the app closed: this sync took it
+                // first, so the job MediaStore wakes (NewMediaWorker) finds nothing new.
+                val s = app.settings.current()
+                if ((r.added > 0 || r.changed > 0) && s.describeNewMedia && app.ai.ready(s)) {
+                    Work.describe(app, userInitiated = false, s)
+                }
             }
         }
         // Where new files were taken, read beside the rest (a large library's first reading
