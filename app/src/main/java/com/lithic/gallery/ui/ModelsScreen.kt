@@ -73,7 +73,7 @@ fun ModelsScreen(vm: GalleryViewModel, onBack: () -> Unit) {
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
             Text(
-                "The same models thumbsup2 uses, run on this phone: nothing is sent anywhere. Each is the original " +
+                "These AI models run on this phone: nothing is sent anywhere. Each is the original " +
                     "file from its publisher (HuggingFace, EasyOCR's GitHub), downloaded once and checked.",
                 style = MaterialTheme.typography.bodyMedium,
             )

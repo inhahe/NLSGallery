@@ -149,7 +149,7 @@ fun SettingsScreen(vm: GalleryViewModel, scroll: ScrollState, onBack: () -> Unit
             for ((detail, label, about) in listOf(
                 Triple(TextDetail.BALANCED, "Balanced", "Full detail for screenshots, downloads and messages; " +
                     "camera photos and videos at half (each photo about 10 s instead of a minute)"),
-                Triple(TextDetail.FULL, "Full", "Everything at thumbsup2's detail (about a minute per camera photo)"),
+                Triple(TextDetail.FULL, "Full", "Everything in full detail (about a minute per camera photo)"),
                 Triple(TextDetail.FAST, "Fast", "Everything at half detail (misses small text in screenshots)"),
             )) {
                 Choice(label, about, s.textDetail == detail) { set { it.copy(textDetail = detail) } }
@@ -159,8 +159,8 @@ fun SettingsScreen(vm: GalleryViewModel, scroll: ScrollState, onBack: () -> Unit
                 when (gpu) {
                     AiEngine.Gpu.UNKNOWN -> "Looking for the GPU…"
                     AiEngine.Gpu.NONE -> "This phone has no GPU the text reader runs on: it uses the processor"
-                    AiEngine.Gpu.FOUND -> "This phone's Snapdragon GPU finds text about five times as fast. In half " +
-                        "precision: now and then a word reads differently from thumbsup2's"
+                    AiEngine.Gpu.FOUND -> "This phone's Snapdragon GPU finds text about five times as fast. It works in " +
+                        "half precision, so now and then a word reads differently than on the processor"
                     AiEngine.Gpu.DIFFERS -> "This phone's GPU failed its check, so the processor reads text until the app restarts"
                     AiEngine.Gpu.FAILED -> "This phone's GPU failed, so the processor reads text until the app restarts"
                 },
@@ -169,8 +169,8 @@ fun SettingsScreen(vm: GalleryViewModel, scroll: ScrollState, onBack: () -> Unit
                 s.aiThreads.toFloat(), 0f..8f, steps = 7) { v -> set { it.copy(aiThreads = v.roundToInt()) } }
 
             Section("Search")
-            Hint("Search looks in the AI description, the text in the picture, the file's own caption, its name and folder, as " +
-                "thumbsup2's search does: matching words (with typos and word starts) blended with matching meaning. " +
+            Hint("Search looks in the AI description, the text in the picture, the file's own caption, its name and folder: " +
+                "matching words (with typos and word starts) blended with matching meaning. " +
                 "Add when (\"beach last summer\", \"dog 2023\", \"christmas\") to look among the pictures taken then, " +
                 "and where (\"beach in hawaii\", \"paris\") among those taken there.")
             PlacesRow(vm, s.locationAsked)

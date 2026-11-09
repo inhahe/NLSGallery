@@ -2,8 +2,9 @@
 
 NLSGallery (Natural Language Search Gallery) is a gallery for Android that shows every photo and video on the phone (not only what arrived
 after it was installed), sorted into tabs, laid out without cropping, and searchable by what
-the pictures show. The descriptions are made on the phone by the same AI models
-[thumbsup2](../thumbsup2) uses, and searched the same way.
+the pictures show. The descriptions are made on the phone by published AI models (BLIP, which
+says what a picture shows; EasyOCR, which reads the text in it; MiniLM, which lets search match
+meaning), so nothing about your pictures leaves the phone.
 
 ## What it needs
 
@@ -61,7 +62,7 @@ Type in the search field to find pictures by what is in them ("dog on a beach", 
 "birthday cake"), by text visible in them (signs, screenshots, documents), by their own
 caption, file name or folder, and by where they were taken (see *Places*). Search finds matching words, also with typos and word starts, and
 pictures whose description *means* what you typed even with different words; the two are
-blended as in thumbsup2. A dot on a thumbnail marks a result found by meaning alone. Chips under
+blended into one list. A dot on a thumbnail marks a result found by meaning alone. Chips under
 the search field choose where to look, and can limit results to the current tab.
 
 **Dates.** Say when, in plain English: "beach last summer", "dog 2023", "christmas", "flowers in
@@ -156,13 +157,13 @@ When something goes wrong:
 
 **Text reading detail** (Settings → AI): *Balanced* (default) reads screenshots, downloads and
 messages in full detail and camera photos and videos at half size, about 10 seconds each instead
-of a minute; *Full* reads everything as thumbsup2 does; *Fast* reads everything at half size.
+of a minute; *Full* reads everything in full detail; *Fast* reads everything at half size.
 
 **Read text on the GPU** (Settings → AI, on by default on Snapdragon phones): the text detector
 runs on the phone's graphics processor, about five times as fast (finding the text in a camera
 photo takes about 2 seconds instead of 10, at full detail about 10 instead of 50). It computes in half
-precision, which now and then moves a text box by a pixel, so a word can read differently from
-thumbsup2's; switched off, text is read exactly as thumbsup2 reads it.
+precision, which now and then moves a text box by a pixel, so a word can read differently than
+on the processor; switched off, the processor reads all the text.
 
 ## Installing
 
@@ -193,7 +194,8 @@ keyPassword=...
 To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -storetype PKCS12
 -alias lithic-gallery -keyalg RSA -keysize 4096 -validity 36500`.
 
-`gradlew :core:test` compares the on-device pipeline with thumbsup2's output (see
+`gradlew :core:test` compares the on-device pipeline with the output of
+[thumbsup2](../thumbsup2), the desktop program whose AI pipeline the app reproduces (see
 `tools/README.md` for the test data and weights it needs). `design.md` describes how it works.
 
 ## Credits
@@ -208,4 +210,4 @@ months (for Ramadan and Eid) from [hijridate](https://github.com/dralshehri/hijr
 (MIT); BLIP (BSD-3-Clause), CRAFT (MIT), EasyOCR and all-MiniLM-L6-v2 (Apache 2.0), whose weights
 the app downloads from their publishers; and MiniSearch (MIT), Pillow's and PyTorch's resizing
 (MIT-CMU, BSD-3-Clause), OpenCV and Hugging Face's tokenizers and transformers (Apache 2.0), whose
-code the app reproduces to match thumbsup2.
+code the app reproduces so its results match those the original tools give.
