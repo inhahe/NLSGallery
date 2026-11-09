@@ -31,6 +31,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -503,13 +504,12 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun neededModels(): List<String> = settings.value.let { ModelManager.needed(it.captions, it.ocr) }
 
-    /** Forgets [item]'s description so it is described again on the next run, and starts one. */
-    fun redescribe(item: MediaEntity) {
-        viewModelScope.launch {
-            app.db.ai().forget(item.aiKey)
-            Work.describe(app, userInitiated = true, settings.value)
-        }
-    }
+    /** Describes [item] afresh, at once, beside any run going; its description stays until the new one is saved. */
+    fun redescribe(item: MediaEntity) = Work.describeFile(app, item)
+
+    /** Whether [item] is being described afresh ([redescribe]), or waits to be. */
+    fun redescribing(item: MediaEntity): Flow<Boolean> =
+        workManager.getWorkInfosForUniqueWorkFlow(Work.fileWork(item.id)).map { infos -> infos.any { !it.state.isFinished } }
 
     /** Retries the files describing failed on. */
     fun retryFailures() {

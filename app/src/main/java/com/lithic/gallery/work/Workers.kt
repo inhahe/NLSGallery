@@ -83,6 +83,8 @@ object Work {
     const val DESCRIBE_ON_CHARGER = "describe-on-charger"
     /** In [OnBattery.NEW_ONLY], the files described on battery: taken in the last [NEW_DAYS] days. */
     const val NEW_DAYS = 7L
+    /** The tag of every request to describe one file afresh ([DescribeFileWorker]), each its own unique work ([fileWork]). */
+    const val DESCRIBE_FILE = "describe-file"
     const val MEDIA_TRIGGER = "media-trigger"
     const val DOWNLOAD = "download-models"
     /** Whether the user asked for a run, in a request queued before runs were tagged with their [Run]: read, never written. */
@@ -95,6 +97,8 @@ object Work {
     const val KEY_PHASE_DONE = "phaseDone"
     const val KEY_PHASE_TOTAL = "phaseTotal"
     const val KEY_KEYS = "keys"
+    /** The media id of the file a [DescribeFileWorker] describes. */
+    const val KEY_MEDIA = "media"
     const val KEY_ERROR = "error"
 
     const val CHANNEL_AI = "ai"
@@ -265,14 +269,35 @@ object Work {
         }
     }
 
+    /**
+     * Describes [item] afresh, at once and whatever the battery, beside any describe run going
+     * ([DescribeFileWorker]). Each file is its own work, so one failing holds up no other; asked
+     * for again while it waits or goes, it is not doubled.
+     */
+    fun describeFile(context: Context, item: MediaEntity) {
+        val request = OneTimeWorkRequestBuilder<DescribeFileWorker>()
+            .setInputData(workDataOf(KEY_MEDIA to item.id))
+            .addTag(DESCRIBE_FILE)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(fileWork(item.id), ExistingWorkPolicy.KEEP, request)
+    }
+
+    /** The unique work describing the file of media id [id] afresh: whether it is waiting or going. */
+    fun fileWork(id: Long): String = "$DESCRIBE_FILE-$id"
+
+    /** Whether a describe run is going. */
+    internal suspend fun describing(context: Context): Boolean =
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(DESCRIBE).first().any { it.state == WorkInfo.State.RUNNING }
+
     /** Whether the phone is charging, as Android's job scheduling counts it (a weak charger the phone drains on may not count). */
     fun charging(context: Context): Boolean = context.getSystemService(BatteryManager::class.java)?.isCharging ?: false
 
-    /** Stops describing until something asks again: the run going, the one waiting, and the charger's. */
+    /** Stops describing until something asks again: the run going, the one waiting, the charger's, and single files. */
     fun stopDescribing(context: Context) {
         val wm = WorkManager.getInstance(context)
         wm.cancelUniqueWork(DESCRIBE)
         wm.cancelUniqueWork(DESCRIBE_ON_CHARGER)
+        wm.cancelAllWorkByTag(DESCRIBE_FILE)
     }
 
     /**
@@ -536,6 +561,35 @@ class ChargerWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         if ((s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s)) Work.request(applicationContext, Run.CHARGER)
         return Result.success()
     }
+}
+
+/**
+ * Describes one file afresh ([Work.describeFile]): "Describe now" or "Describe again" on it. It
+ * runs beside a describe run going rather than after it (which, a library's first, takes hours),
+ * the two taking the models a file at a time ([AiEngine] holds one lock); the file's description
+ * stays as it was until the new one is saved. When the models fail on it, the description stays
+ * as it was (one not made yet is left to the runs, which try it after the others).
+ */
+class DescribeFileWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val app = applicationContext as GalleryApp
+        val s = app.settings.current()
+        if (!app.ai.ready(s)) return Result.success()
+        val item = app.db.media().byId(inputData.getLong(Work.KEY_MEDIA, -1)) ?: return Result.success()
+        val outcome = try {
+            app.ai.describe(item, s, again = true)
+        } finally {
+            withContext(NonCancellable) {
+                // A run going uses the models next: they stay open for it.
+                if (!Work.describing(applicationContext)) app.ai.release()
+            }
+            app.search.invalidate()
+        }
+        Log.i(TAG, "file ${item.id}: $outcome")
+        return Result.success()
+    }
+
+    private companion object { const val TAG = "DescribeFileWorker" }
 }
 
 /** Woken by MediaStore when photos or videos change: updates the library, describes what is new, re-arms. */

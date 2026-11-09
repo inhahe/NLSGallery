@@ -124,8 +124,9 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /**
      * Makes the parts of [item]'s description it lacks among those asked for ([captions], [ocr]),
-     * and saves the description with the embedding of its text. Only the models the asked-for
-     * parts need are kept open.
+     * or with [again] all of those parts afresh (and a file set aside as failed is tried too), and
+     * saves the description with the embedding of its text; until then the description stays as
+     * it was. Only the models the asked-for parts need are kept open.
      *
      * What a failure leaves depends on where it happens. Reading the file: the file is at fault,
      * and the error is saved, so it is not tried again until it changes (a new key) or is reset;
@@ -136,12 +137,14 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      * it was. The embedding failing alone: the description is saved without it, for
      * [embedMissing] to make. Any part made resets the file's model failures.
      */
-    suspend fun describe(item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr): Outcome = mutex.withLock {
+    suspend fun describe(
+        item: MediaEntity, s: Settings, captions: Boolean = s.captions, ocr: Boolean = s.ocr, again: Boolean = false,
+    ): Outcome = mutex.withLock {
         withContext(Dispatchers.Default) {
             val existing = dao.description(item.aiKey)
-            if (existing?.error != null) return@withContext Outcome.Skipped
-            val wantCaption = captions && existing?.caption == null
-            val wantOcr = ocr && existing?.ocr == null
+            if (existing?.error != null && !again) return@withContext Outcome.Skipped
+            val wantCaption = captions && (again || existing?.caption == null)
+            val wantOcr = ocr && (again || existing?.ocr == null)
             if (!wantCaption && !wantOcr) return@withContext Outcome.Skipped
             var manual = existing?.manualCaption ?: ""
             suspend fun fail(error: String): Outcome {

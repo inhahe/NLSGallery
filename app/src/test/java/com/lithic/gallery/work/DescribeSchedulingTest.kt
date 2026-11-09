@@ -255,15 +255,40 @@ class DescribeSchedulingTest {
         assertThat(live().map(::kind)).containsExactly(Run.CHARGER)
     }
 
+    private val now = 1_800_000_000_000L
+
+    /** A photo, its key [key], taken [daysAgo] days before [now]. */
+    private fun item(key: String, daysAgo: Double = 0.0) = MediaEntity(
+        id = key.hashCode().toLong(), uri = "content://media/$key", isVideo = false, displayName = "$key.jpg",
+        relativePath = "DCIM/Camera/", mimeType = "image/jpeg",
+        sortDate = now - (daysAgo * TimeUnit.DAYS.toMillis(1)).toLong(), dateModified = 0, size = 0,
+        width = 0, height = 0, orientation = 0, durationMs = 0, folder = 0, aiKey = key, generation = 0,
+    )
+
+    @Test
+    fun aFileDescribedAgainGoesBesideTheRunGoing() {
+        fun file(of: MediaEntity) = wm.getWorkInfosForUniqueWork(Work.fileWork(of.id)).get()
+        // A run going: a library's first, say, which takes hours.
+        request(Run.USER)
+        val photo = item("photo")
+        Work.describeFile(context, photo)
+        // The file goes at once, not after the run, which goes on.
+        assertThat(file(photo).single().state).isEqualTo(WorkInfo.State.RUNNING)
+        assertThat(running().map(::kind)).containsExactly(Run.USER)
+        // Asked for again while it goes: not doubled.
+        Work.describeFile(context, photo)
+        assertThat(file(photo)).hasSize(1)
+        // Another file does not wait for it.
+        val other = item("other")
+        Work.describeFile(context, other)
+        assertThat(file(other).single().state).isEqualTo(WorkInfo.State.RUNNING)
+        // Stop stops them too.
+        Work.stopDescribing(context)
+        assertThat(wm.getWorkInfosByTag(Work.DESCRIBE_FILE).get().filter { !it.state.isFinished }).isEmpty()
+    }
+
     @Test
     fun onBatteryARunTakesTheNewFilesUpToTheBudget() {
-        val now = 1_800_000_000_000L
-        fun item(key: String, daysAgo: Double) = MediaEntity(
-            id = key.hashCode().toLong(), uri = "content://media/$key", isVideo = false, displayName = "$key.jpg",
-            relativePath = "DCIM/Camera/", mimeType = "image/jpeg",
-            sortDate = now - (daysAgo * TimeUnit.DAYS.toMillis(1)).toLong(), dateModified = 0, size = 0,
-            width = 0, height = 0, orientation = 0, durationMs = 0, folder = 0, aiKey = key, generation = 0,
-        )
         val t = item("t", 0.1) // captioned already: waits for its text alone
         val a = item("a", 0.5)
         val b = item("b", 1.0)

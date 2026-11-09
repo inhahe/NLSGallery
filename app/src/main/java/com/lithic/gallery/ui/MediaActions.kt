@@ -223,8 +223,11 @@ fun MediaDetails(item: MediaEntity, hit: SearchService.Result?, vm: GalleryViewM
             }
         }
         if (ai.ready) {
+            val redescribing by remember(item.id) { vm.redescribing(item) }.collectAsState(false)
             Row {
-                TextButton(onClick = { vm.redescribe(item) }) { Text(if (d == null) "Describe now" else "Describe again") }
+                TextButton(onClick = { vm.redescribe(item) }, enabled = !redescribing) {
+                    Text(if (redescribing) "Describing…" else if (d == null) "Describe now" else "Describe again")
+                }
             }
         }
         Spacer(Modifier.height(24.dp))

@@ -132,6 +132,7 @@ private fun ViewerChrome(
 ) {
     val context = LocalContext.current
     val description by remember(item.aiKey) { vm.description(item) }.collectAsState(null)
+    val redescribing by remember(item.id) { vm.redescribing(item) }.collectAsState(false)
     val ai by vm.aiStatus.collectAsState()
     Box(Modifier.fillMaxSize()) {
         Row(
@@ -163,8 +164,9 @@ private fun ViewerChrome(
                     DropdownMenuItem(text = { Text("Open with…") }, onClick = { menu = false; onOpenWith() })
                     if (ai.ready) {
                         DropdownMenuItem(
-                            text = { Text(if (description == null) "Describe now" else "Describe again") },
+                            text = { Text(if (redescribing) "Describing…" else if (description == null) "Describe now" else "Describe again") },
                             onClick = { menu = false; vm.redescribe(item) },
+                            enabled = !redescribing,
                         )
                     }
                 }

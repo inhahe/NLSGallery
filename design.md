@@ -208,7 +208,7 @@ in Telephoto's `ZoomableAsyncImage` (sub-sampled tiles for huge images), videos 
 ExoPlayer started on tap. Share, edit/open with (intents), move to trash
 (`MediaStore.createTrashRequest`, API 30+; delete with the RecoverableSecurityException flow on
 29), details sheet (dates, file, AI description, OCR text, own caption, why a search hit matched),
-"Describe again". A long press on a thumbnail opens `MediaSheet`: the file's name and folder
+"Describe again" (`Work.describeFile`: "Describing…" while its work waits or goes). A long press on a thumbnail opens `MediaSheet`: the file's name and folder
 (selectable), open, share, delete, edit, open with, copy name, and the same details. The viewer
 and the sheet share `MediaActions` (the intents; the trash flow, after which the library is
 synced) and `MediaDetails`.
@@ -487,6 +487,7 @@ and greys the toggle out where there is none.
 | Work | When | Constraints |
 |---|---|---|
 | `DescribeWorker` (unique "describe") | AI button; app start if "Describe the rest when the app opens"; after a model download; after new media (by `NewMediaWorker`, or with the app open by its own sync, which takes the new files first); `ChargerWorker` | by its `Run` (the request's tag): user none; battery: battery not low; charger: that and charging |
+| `DescribeFileWorker` (unique "describe-file-<media id>", tag "describe-file") | "Describe now" / "Describe again" on one file: describes it afresh (`AiEngine.describe(again = true)`, the old description kept until the new one is saved), beside any describe run (`AiEngine`'s lock takes them a file at a time; the models stay open if a run is going), so it never waits for a run to end; each file its own work, so one failing holds up no other | none |
 | `ChargerWorker` (unique "describe-on-charger") | queued (replacing) by a run on battery that left files, in *New photos only*: asks for a charger run once the phone is plugged in | charging, battery not low |
 | `NewMediaWorker` (unique "media-trigger") | MediaStore content-URI trigger (images + video, 5 s update delay, 1 min max), re-armed after each run; armed while "Describe new photos as they arrive" is on | none |
 | `ModelDownloadWorker` (unique "download-models") | Models screen | network (unmetered if "Only over Wi-Fi") |
@@ -522,7 +523,7 @@ unplugged: in *New photos only* `Work.chargerRunStopped` replaces it, and what w
 with a run on battery. Changing the rule (`Work.replan`) starts a run on battery that is going
 again, makes the automatic runs queued what the new rule asks for, and turns a queued
 `ChargerWorker` into an automatic request out of *New photos only*. Stop
-(`Work.stopDescribing`) cancels the charger's queue too. The AI dialog says what waits for the
+(`Work.stopDescribing`) cancels the charger's queue and single files' work too. The AI dialog says what waits for the
 charger, or that nothing describes by itself when both automatic switches are off.
 
 Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s

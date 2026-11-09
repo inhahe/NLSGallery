@@ -167,6 +167,9 @@ interface MediaDao {
     @Query("SELECT * FROM media ORDER BY sortDate DESC, id DESC")
     suspend fun all(): List<MediaEntity>
 
+    @Query("SELECT * FROM media WHERE id = :id")
+    suspend fun byId(id: Long): MediaEntity?
+
     @Upsert
     suspend fun upsert(items: List<MediaEntity>)
 

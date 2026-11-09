@@ -2,13 +2,7 @@
 
 Open bugs and technical debt, each with where it lives, how to reproduce it, and the proper fix.
 
-- **Redescribing a file during a long run leaves it undescribed until that run ends.**
-  `GalleryViewModel.redescribe` forgets the description, then asks for a user run; a run's lists
-  are made as it starts, so the file waits for the run queued after the one going, which behind
-  a library's first run is hours, the file unsearchable all that time. Reproduce: start
-  describing a large library, open a described photo, Describe again: its description stays
-  empty. Fix: describe that one file at once, beside the run going (the models are shared and
-  `AiEngine` takes one file at a time), and keep the old description until the new one is saved.
+None open.
 
 ## Limits
 
