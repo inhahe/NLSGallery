@@ -187,6 +187,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.work.runtime)
+    implementation(libs.androidx.concurrent.futures.ktx)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
@@ -214,6 +215,7 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.junit)
     testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.androidx.work.testing)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.truth)
 

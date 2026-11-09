@@ -91,6 +91,7 @@ import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.LayoutMode
 import com.lithic.gallery.data.OnBattery
+import com.lithic.gallery.work.BatteryBudget
 import kotlin.math.roundToInt
 
 fun Category.label(): String = when (this) {
@@ -619,14 +620,17 @@ private fun AiDialog(
                         else "Starting…",
                     )
                     ai.undescribed > 0 -> Text(
-                        "${ai.undescribed} photos and videos have no description yet. Describing them runs in the " +
-                            "background, newest first, and each is searchable as soon as it is done." +
-                            when (ai.onBattery) {
-                                OnBattery.NEW_ONLY -> " On battery only those from the last week are described; " +
-                                    "the rest wait for the charger (Settings, AI)."
-                                OnBattery.CHARGER_ONLY -> " It waits for the charger (Settings, AI)."
-                                OnBattery.ANYTIME -> ""
-                            } + " Describe now starts on them all at once.",
+                        "${ai.undescribed} photos and videos have no description yet. " +
+                            if (!ai.automatic) "Nothing describes them by itself (Settings, AI); Describe now starts on " +
+                                "them all, newest first, and each is searchable as soon as it is done."
+                            else "Describing them runs in the background, newest first, and each is searchable as " +
+                                "soon as it is done." +
+                                when (ai.onBattery) {
+                                    OnBattery.NEW_ONLY -> " On battery only those from the last week are described, up " +
+                                        "to ${BatteryBudget.PER_DAY} a day; the rest wait for the charger (Settings, AI)."
+                                    OnBattery.CHARGER_ONLY -> " It waits for the charger (Settings, AI)."
+                                    OnBattery.ANYTIME -> ""
+                                } + " Describe now starts on them all at once.",
                     )
                     else -> Text("Everything is described and searchable.")
                 }

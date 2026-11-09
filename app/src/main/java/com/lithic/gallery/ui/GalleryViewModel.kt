@@ -2,6 +2,7 @@ package com.lithic.gallery.ui
 
 import android.app.Application
 import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -24,6 +25,7 @@ import com.lithic.gallery.data.MediaLocations
 import com.lithic.gallery.search.Places
 import com.lithic.gallery.search.SearchService
 import com.lithic.gallery.work.Work
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -78,6 +80,8 @@ data class AiStatus(
     val downloadDone: Long = 0,
     val downloadTotal: Long = 0,
     val downloadError: String? = null,
+    /** Whether anything describes by itself ("Describe new photos as they arrive", or "the rest when the app opens"). */
+    val automatic: Boolean = true,
     /** What automatic describing does on battery, for the dialog to say why files wait. */
     val onBattery: OnBattery = OnBattery.NEW_ONLY,
 )
@@ -279,6 +283,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             downloadDone = dl?.progress?.getLong(Work.KEY_DONE, 0) ?: 0,
             downloadTotal = dl?.progress?.getLong(Work.KEY_TOTAL, 0) ?: 0,
             downloadError = if (dl == null) dlFailed?.outputData?.getString(Work.KEY_ERROR) else null,
+            automatic = s.describeNewMedia || s.describeOnOpen,
             onBattery = s.onBattery,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AiStatus())
@@ -398,13 +403,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         // MediaStore changes while the app is open: resync shortly after they settle.
         viewModelScope.launch {
             app.repository.changes().debounce(1000).collect {
-                val r = app.repository.sync()
-                scans.trySend(Unit)
-                // What arrived describes as it would with the app closed: this sync took it
-                // first, so the job MediaStore wakes (NewMediaWorker) finds nothing new.
-                val s = app.settings.current()
-                if ((r.added > 0 || r.changed > 0) && s.describeNewMedia && app.ai.ready(s)) {
-                    Work.describe(app, userInitiated = false, s)
+                // One failure must not end the collecting: the library would stop following
+                // MediaStore until the app is opened again.
+                try {
+                    val r = app.repository.sync()
+                    scans.trySend(Unit)
+                    // What arrived describes as it would with the app closed: this sync took it
+                    // first, so the job MediaStore wakes (NewMediaWorker) finds nothing new.
+                    val s = app.settings.current()
+                    if ((r.added > 0 || r.changed > 0) && s.describeNewMedia && app.ai.ready(s)) {
+                        Work.describe(app, userInitiated = false, s)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "following the library's changes", e)
                 }
             }
         }
@@ -449,6 +462,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateSettings(change: (Settings) -> Settings) {
         viewModelScope.launch { app.settings.update(change) }
+    }
+
+    /** Sets "On battery"; what is queued or going is planned again by it. */
+    fun setOnBattery(rule: OnBattery) {
+        viewModelScope.launch {
+            if (app.settings.current().onBattery == rule) return@launch
+            app.settings.update { it.copy(onBattery = rule) }
+            Work.replan(app, rule)
+        }
     }
 
     fun openViewer(list: List<MediaEntity>, hits: Map<Long, SearchService.Result> = emptyMap()) {
@@ -504,6 +526,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun storageUsedByModels(): Long = app.models.bytesOnDisk()
 
     private companion object {
+        const val TAG = "GalleryViewModel"
         /** How far back the pass's speed is taken from: describing slows as the phone warms. */
         const val ETA_WINDOW_MS = 5 * 60_000L
     }

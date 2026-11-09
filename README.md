@@ -122,14 +122,16 @@ button.
 plugged in:
 
 - *New photos only* (the default): photos and videos from the last week are described as they
-  arrive, so they are searchable within a minute; the rest, a library's first run of hours, waits
-  for the charger and starts by itself once the phone is plugged in. Unplugged in the middle of
-  it, describing goes on with the new ones only.
+  arrive, up to 100 a day, so they are searchable within a minute; the rest, a library's first
+  run of hours, waits for the charger and starts by itself once the phone is plugged in.
+  Unplugged in the middle of it, describing goes on with the new ones only. (The 100 keep a batch
+  of old files without dates, which count as new, from draining the battery.)
 - *Everything*: whatever is waiting is described, plugged in or not.
 - *Nothing*: automatic describing waits for the charger.
 
 Automatic describing also pauses while the battery is low. The AI button's *Describe now* always
-describes everything at once.
+describes everything at once. A weak charger, such as a computer's USB port, may not count as
+charging, and then the phone is treated as on battery.
 
 Describing goes in two rounds: first a caption for every picture (a couple of seconds each), so
 everything becomes searchable soon; then the text in pictures, which is slower (10 seconds to a

@@ -25,9 +25,9 @@ enum class OnBattery {
     ANYTIME,
 
     /**
-     * Describe the photos and videos taken lately ([com.lithic.gallery.work.Work.NEW_DAYS]), so new
-     * ones are searchable within a minute; the rest (a library's first run takes hours) waits for
-     * the charger.
+     * Describe the photos and videos taken lately ([com.lithic.gallery.work.Work.NEW_DAYS]), up to
+     * [com.lithic.gallery.work.BatteryBudget.PER_DAY] a day, so new ones are searchable within a
+     * minute; the rest (a library's first run takes hours) waits for the charger.
      */
     NEW_ONLY,
 
@@ -37,11 +37,13 @@ enum class OnBattery {
 
 /**
  * [OnBattery] as stored ([stored], its name) or, before it was, as the switch it replaced
- * ([onlyWhileCharging]: on, wait for the charger; off, anytime); null when neither was stored.
+ * ([onlyWhileCharging]): on, wait for the charger. Off says nothing (builds before stored every
+ * setting on any change, so nearly every install has it off), and gets the default, as does
+ * nothing stored: null.
  */
 internal fun onBatteryFrom(stored: String?, onlyWhileCharging: Boolean?): OnBattery? =
     stored?.let { runCatching { OnBattery.valueOf(it) }.getOrNull() }
-        ?: onlyWhileCharging?.let { if (it) OnBattery.CHARGER_ONLY else OnBattery.ANYTIME }
+        ?: OnBattery.CHARGER_ONLY.takeIf { onlyWhileCharging == true }
 
 /**
  * How large an image EasyOCR's detector reads text at. thumbsup2 (EasyOCR's default) works at up

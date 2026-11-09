@@ -486,20 +486,44 @@ and greys the toggle out where there is none.
 
 | Work | When | Constraints |
 |---|---|---|
-| `DescribeWorker` (unique "describe") | AI button; app start if "Describe the rest when the app opens"; after a model download; after new media (by `NewMediaWorker`, or with the app open by its own sync, which takes the new files first) | user: none; automatic: battery not low, and charging when "On battery" is *Nothing* |
-| `ChargerWorker` (unique "describe-on-charger") | queued by every automatic describe in *New photos only*: starts a describe once the phone is plugged in | charging, battery not low |
+| `DescribeWorker` (unique "describe") | AI button; app start if "Describe the rest when the app opens"; after a model download; after new media (by `NewMediaWorker`, or with the app open by its own sync, which takes the new files first); `ChargerWorker` | by its `Run` (the request's tag): user none; battery: battery not low; charger: that and charging |
+| `ChargerWorker` (unique "describe-on-charger") | queued (replacing) by a run on battery that left files, in *New photos only*: asks for a charger run once the phone is plugged in | charging, battery not low |
 | `NewMediaWorker` (unique "media-trigger") | MediaStore content-URI trigger (images + video, 5 s update delay, 1 min max), re-armed after each run; armed while "Describe new photos as they arrive" is on | none |
 | `ModelDownloadWorker` (unique "download-models") | Models screen | network (unmetered if "Only over Wi-Fi") |
 
 "On battery" (`Settings.onBattery`, `OnBattery`) is what automatic describing does unplugged:
-*Everything*, *Nothing* (a charging constraint), or *New photos only* (the default for a fresh
-install; a choice stored by the switch it replaced keeps its meaning: on, *Nothing*; off,
-*Everything*). In *New photos only* an automatic run on battery (`Work.newOnly`, the plug read
-from the sticky battery broadcast) takes only the files taken in the last week (`Work.isNew`,
-`sortDate`: a cloud restore of old photos waits for the charger, though it arrives all at once),
-embeddings always all; `ChargerWorker` runs a describe when the phone is plugged in, which takes
-all; and such a run, unplugged, stops (`Work.stopsUnplugged`, checked before each file) and
-queues one on battery in its place. The AI dialog says what waits for the charger.
+*Everything*, *Nothing*, or *New photos only* (the default; of the switch it replaced only "on"
+carries over, as *Nothing*: earlier builds stored every setting on any change, so "off" was
+stored whether chosen or not).
+
+Every describe run is one of three kinds (`Run`, kept as its request's tag): the **user's**
+(the AI button, redescribing, retrying: everything at once, no constraints), one **on battery**
+(automatic: battery not low), and the **charger's** (automatic in *Nothing*, and the one
+`ChargerWorker` asks for: charging too, so Android stops it when the phone is unplugged and
+queues it again). What a run takes is decided as it starts, from its kind and the rule as it then
+stands (`Work.scope`): everything, except a run on battery, which in *New photos only* takes the
+files taken in the last week (`Work.isNew`, by `sortDate`) newest first, at most
+`BatteryBudget.PER_DAY` (100) a day, a file counted once whatever its passes, as it is tried
+(`Work.plan`; embeddings always all), and in *Nothing* takes nothing and asks for a charger run
+instead. The budget stops a batch that counts as new (a restore of files without a date taken,
+which then go by their copy date) from draining the battery; it lives in its own DataStore, since
+it changes with every file. A run on battery that leaves files queues `ChargerWorker`.
+
+The "describe" chain holds a run going and at most one waiting after it (a run's lists are made
+as it starts; the one waiting takes what is added or reset meanwhile). `Work.request` places a
+request under a mutex: with none going it replaces what waits; with one going it is appended, or
+merged into the one waiting (`WorkManager.updateWork`, which keeps its place in the chain) as
+`Work.merge` says: the user's over the others, so a user's request is never dropped or delayed by
+an automatic run's constraints; one on battery over the charger's, so new files never wait
+behind a charger run (the run on battery queues the charger's again for the rest). When a
+charger run is stopped (`DescribeWorker` checks as it ends), not cancelled, and the phone no
+longer charges (`BatteryManager.isCharging`, Android's job scheduling's notion), it was
+unplugged: in *New photos only* `Work.chargerRunStopped` replaces it, and what waited behind it,
+with a run on battery. Changing the rule (`Work.replan`) starts a run on battery that is going
+again, makes the automatic runs queued what the new rule asks for, and turns a queued
+`ChargerWorker` into an automatic request out of *New photos only*. Stop
+(`Work.stopDescribing`) cancels the charger's queue too. The AI dialog says what waits for the
+charger, or that nothing describes by itself when both automatic switches are off.
 
 Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s
 each, so the whole library is soon searchable; then the text in pictures, 10-60 s each, ordered
