@@ -116,7 +116,20 @@ From a computer, `push-models.bat` copies them over USB instead (after
 Each one is searchable as soon as it is done. While it works, a line under the tabs says which
 round it is in, how far through, and about how long is left ("Describing pictures · 1,234 of
 5,000 · about 2 h left"); tap it for more. A notification shows the same and has a Stop
-button. **Only while charging** makes the automatic runs wait for the charger.
+button.
+
+**On battery** (Settings → AI) says what automatic describing does while the phone is not
+plugged in:
+
+- *New photos only* (the default): photos and videos from the last week are described as they
+  arrive, so they are searchable within a minute; the rest, a library's first run of hours, waits
+  for the charger and starts by itself once the phone is plugged in. Unplugged in the middle of
+  it, describing goes on with the new ones only.
+- *Everything*: whatever is waiting is described, plugged in or not.
+- *Nothing*: automatic describing waits for the charger.
+
+Automatic describing also pauses while the battery is low. The AI button's *Describe now* always
+describes everything at once.
 
 Describing goes in two rounds: first a caption for every picture (a couple of seconds each), so
 everything becomes searchable soon; then the text in pictures, which is slower (10 seconds to a

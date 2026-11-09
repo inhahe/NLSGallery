@@ -18,6 +18,7 @@ import com.lithic.gallery.core.search.SearchReading
 import com.lithic.gallery.data.Categories
 import com.lithic.gallery.data.Category
 import com.lithic.gallery.data.MediaEntity
+import com.lithic.gallery.data.OnBattery
 import com.lithic.gallery.data.Settings
 import com.lithic.gallery.data.MediaLocations
 import com.lithic.gallery.search.Places
@@ -77,6 +78,8 @@ data class AiStatus(
     val downloadDone: Long = 0,
     val downloadTotal: Long = 0,
     val downloadError: String? = null,
+    /** What automatic describing does on battery, for the dialog to say why files wait. */
+    val onBattery: OnBattery = OnBattery.NEW_ONLY,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -276,6 +279,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             downloadDone = dl?.progress?.getLong(Work.KEY_DONE, 0) ?: 0,
             downloadTotal = dl?.progress?.getLong(Work.KEY_TOTAL, 0) ?: 0,
             downloadError = if (dl == null) dlFailed?.outputData?.getString(Work.KEY_ERROR) else null,
+            onBattery = s.onBattery,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, AiStatus())
 

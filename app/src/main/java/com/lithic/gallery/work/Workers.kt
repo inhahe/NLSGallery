@@ -3,11 +3,15 @@ package com.lithic.gallery.work
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.os.BatteryManager
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -26,6 +30,7 @@ import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.R
 import com.lithic.gallery.data.MediaScanner
+import com.lithic.gallery.data.OnBattery
 import com.lithic.gallery.data.Settings
 import kotlinx.coroutines.flow.first
 import java.io.IOException
@@ -34,6 +39,10 @@ import java.util.concurrent.TimeUnit
 /** Scheduling of the app's background work. */
 object Work {
     const val DESCRIBE = "describe"
+    /** In [OnBattery.NEW_ONLY]: a describe run once the phone is plugged in, for what waited for it. */
+    const val DESCRIBE_ON_CHARGER = "describe-on-charger"
+    /** In [OnBattery.NEW_ONLY], the files described on battery: taken in the last [NEW_DAYS] days. */
+    const val NEW_DAYS = 7L
     const val MEDIA_TRIGGER = "media-trigger"
     const val DOWNLOAD = "download-models"
     const val KEY_USER = "user"
@@ -54,25 +63,66 @@ object Work {
 
     /**
      * Describes everything not yet described. Started by the user it runs now, whatever the
-     * battery; started automatically it waits for the battery (and charging, if so set).
-     * During a run (whose lists were made when it began) one more run is queued after it, so
-     * files added or reset meanwhile are not left out; a queued one is not doubled.
+     * battery; started automatically it waits for the battery not to be low, and for the charger
+     * as [Settings.onBattery] says ([automaticConstraints]); in [OnBattery.NEW_ONLY] a run on
+     * battery takes only the new files ([newOnly]), and the rest waits for a run started once
+     * the phone is plugged in ([ChargerWorker]). During a run (whose lists were made when it
+     * began) one more run is queued after it, so files added or reset meanwhile are not left
+     * out; a queued one is not doubled.
      */
     suspend fun describe(context: Context, userInitiated: Boolean, s: Settings) {
         val wm = WorkManager.getInstance(context)
+        if (!userInitiated && s.onBattery == OnBattery.NEW_ONLY) {
+            val onCharger = OneTimeWorkRequestBuilder<ChargerWorker>().setConstraints(chargerConstraints()).build()
+            wm.enqueueUniqueWork(DESCRIBE_ON_CHARGER, ExistingWorkPolicy.KEEP, onCharger)
+        }
         val infos = wm.getWorkInfosForUniqueWorkFlow(DESCRIBE).first()
         val running = infos.any { it.state == WorkInfo.State.RUNNING }
         val queuedAfter = infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
         if (running && queuedAfter) return
-        val constraints = if (userInitiated) Constraints.NONE else Constraints.Builder()
-            .setRequiresBatteryNotLow(true)
-            .setRequiresCharging(s.onlyWhileCharging)
-            .build()
+        val constraints = if (userInitiated) Constraints.NONE else automaticConstraints(s.onBattery)
         val request = OneTimeWorkRequestBuilder<DescribeWorker>()
             .setConstraints(constraints)
             .setInputData(workDataOf(KEY_USER to userInitiated))
             .build()
         wm.enqueueUniqueWork(DESCRIBE, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
+    }
+
+    /** An automatic run's: the battery not low, and plugged in when [rule] is [OnBattery.CHARGER_ONLY]. */
+    internal fun automaticConstraints(rule: OnBattery): Constraints = Constraints.Builder()
+        .setRequiresBatteryNotLow(true)
+        .setRequiresCharging(rule == OnBattery.CHARGER_ONLY)
+        .build()
+
+    /** [ChargerWorker]'s: plugged in, the battery not low. */
+    internal fun chargerConstraints(): Constraints = Constraints.Builder()
+        .setRequiresBatteryNotLow(true)
+        .setRequiresCharging(true)
+        .build()
+
+    /**
+     * Whether a run takes only the new files ([NEW_DAYS]): one started automatically, on battery
+     * ([pluggedIn] false), in [OnBattery.NEW_ONLY]. Started by the user, or plugged in, it takes all.
+     */
+    internal fun newOnly(rule: OnBattery, userInitiated: Boolean, pluggedIn: Boolean): Boolean =
+        !userInitiated && rule == OnBattery.NEW_ONLY && !pluggedIn
+
+    /**
+     * Whether a run that takes all stops when the phone is unplugged (and goes on with the new
+     * files alone): one started automatically, plugged in, in [OnBattery.NEW_ONLY]. In
+     * [OnBattery.CHARGER_ONLY] WorkManager stops it itself, by its constraint.
+     */
+    internal fun stopsUnplugged(rule: OnBattery, userInitiated: Boolean, pluggedIn: Boolean): Boolean =
+        !userInitiated && rule == OnBattery.NEW_ONLY && pluggedIn
+
+    /** Whether a file taken at [sortDate] counts as new at [now] (epoch ms both): taken in the last [NEW_DAYS] days. */
+    internal fun isNew(sortDate: Long, now: Long): Boolean = sortDate >= now - TimeUnit.DAYS.toMillis(NEW_DAYS)
+
+    /** Whether the phone is plugged into power (charging or full). */
+    fun pluggedIn(context: Context): Boolean {
+        val battery = ContextCompat.registerReceiver(context, null, IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED) ?: return false
+        return battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
     }
 
     fun stopDescribing(context: Context) {
@@ -186,11 +236,18 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         suspend fun unembedded() = dao.withoutEmbedding(MiniLmEmbedder.MODEL_ID)
             .filter { embeddingText(it.caption ?: "", it.ocr ?: "") != null }
         val embedFirst = unembedded()
-        val captionPass = if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false) else emptyList()
-        val textPass = if (s.ocr) dao.withoutText(s.describeVideos) else emptyList()
-        var total = embedFirst.size + captionPass.size + textPass.size
-        if (total == 0) return Result.success()
         val user = inputData.getBoolean(Work.KEY_USER, false)
+        val plugged = Work.pluggedIn(applicationContext)
+        // On battery, "new photos only": those taken lately; the rest waits for the charger
+        // (Work.describe queued a run for it). Embeddings take milliseconds: always all.
+        val newOnly = Work.newOnly(s.onBattery, user, plugged)
+        fun wanted(item: MediaEntity) = !newOnly || Work.isNew(item.sortDate, started)
+        val captionPass = if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false).filter(::wanted) else emptyList()
+        val textPass = if (s.ocr) dao.withoutText(s.describeVideos).filter(::wanted) else emptyList()
+        var total = embedFirst.size + captionPass.size + textPass.size
+        Log.i(TAG, "describing: ${captionPass.size} captions, ${textPass.size} texts, ${embedFirst.size} embeddings" +
+            if (newOnly) " (on battery: the new ones; the rest waits for the charger)" else "")
+        if (total == 0) return Result.success()
         val firstPhase = when {
             embedFirst.isNotEmpty() -> AiEngine.Part.EMBEDDINGS
             captionPass.isNotEmpty() -> AiEngine.Part.CAPTIONS
@@ -256,8 +313,15 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         // A pass that ended without its work done (MiniLM failing, or failures it could not tell
         // apart): the run goes on, and is tried again later.
         var unfinished = false
+        // Plugged in, a run that took all stops when unplugged ("new photos only"), and one that
+        // takes the new files is queued in its place.
+        val stopsUnplugged = Work.stopsUnplugged(s.onBattery, user, plugged)
+        var unplugged = false
         try {
-            val stop = { isStopped }
+            val stop = {
+                if (stopsUnplugged && !unplugged && !Work.pluggedIn(applicationContext)) unplugged = true
+                isStopped || unplugged
+            }
             begin(AiEngine.Part.EMBEDDINGS, embedFirst.size)
             unfinished = embedding.run(embedFirst, stop) != DescribePass.End.Done
             for ((part, items) in listOf(AiEngine.Part.CAPTIONS to captionPass, AiEngine.Part.TEXT to textPass)) {
@@ -284,6 +348,11 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
             app.ai.release()
             app.search.invalidate()
         }
+        if (unplugged && !isStopped) {
+            Log.i(TAG, "unplugged: going on with the new files alone")
+            Work.describe(applicationContext, userInitiated = false, s)
+            return Result.success()
+        }
         if (unfinished && !isStopped) {
             Log.w(TAG, "some of this run's work could not be done; it is tried again later")
             return Result.retry()
@@ -295,6 +364,19 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         Work.describeNotification(applicationContext, id, 0, 0)
 
     private companion object { const val TAG = "DescribeWorker" }
+}
+
+/**
+ * Started once the phone is plugged in, in [OnBattery.NEW_ONLY]: describes what waited for the
+ * charger (a run, plugged in, takes all), when describing is automatic at all.
+ */
+class ChargerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val app = applicationContext as GalleryApp
+        val s = app.settings.current()
+        if ((s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s)) Work.describe(applicationContext, userInitiated = false, s)
+        return Result.success()
+    }
 }
 
 /** Woken by MediaStore when photos or videos change: updates the library, describes what is new, re-arms. */

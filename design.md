@@ -486,9 +486,20 @@ and greys the toggle out where there is none.
 
 | Work | When | Constraints |
 |---|---|---|
-| `DescribeWorker` (unique "describe") | AI button; app start if "Describe the rest when the app opens"; after a model download; after new media | user: none; automatic: battery not low, charging if set |
+| `DescribeWorker` (unique "describe") | AI button; app start if "Describe the rest when the app opens"; after a model download; after new media (by `NewMediaWorker`, or with the app open by its own sync, which takes the new files first) | user: none; automatic: battery not low, and charging when "On battery" is *Nothing* |
+| `ChargerWorker` (unique "describe-on-charger") | queued by every automatic describe in *New photos only*: starts a describe once the phone is plugged in | charging, battery not low |
 | `NewMediaWorker` (unique "media-trigger") | MediaStore content-URI trigger (images + video, 5 s update delay, 1 min max), re-armed after each run; armed while "Describe new photos as they arrive" is on | none |
 | `ModelDownloadWorker` (unique "download-models") | Models screen | network (unmetered if "Only over Wi-Fi") |
+
+"On battery" (`Settings.onBattery`, `OnBattery`) is what automatic describing does unplugged:
+*Everything*, *Nothing* (a charging constraint), or *New photos only* (the default for a fresh
+install; a choice stored by the switch it replaced keeps its meaning: on, *Nothing*; off,
+*Everything*). In *New photos only* an automatic run on battery (`Work.newOnly`, the plug read
+from the sticky battery broadcast) takes only the files taken in the last week (`Work.isNew`,
+`sortDate`: a cloud restore of old photos waits for the charger, though it arrives all at once),
+embeddings always all; `ChargerWorker` runs a describe when the phone is plugged in, which takes
+all; and such a run, unplugged, stops (`Work.stopsUnplugged`, checked before each file) and
+queues one on battery in its place. The AI dialog says what waits for the charger.
 
 Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s
 each, so the whole library is soon searchable; then the text in pictures, 10-60 s each, ordered

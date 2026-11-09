@@ -17,6 +17,33 @@ import kotlinx.coroutines.flow.map
 enum class LayoutMode { JUSTIFIED, GRID }
 
 /**
+ * What automatic describing does while the phone is on battery (it always waits while the
+ * battery is low; the AI button describes everything at once, whatever this says).
+ */
+enum class OnBattery {
+    /** Describe whatever is waiting. */
+    ANYTIME,
+
+    /**
+     * Describe the photos and videos taken lately ([com.lithic.gallery.work.Work.NEW_DAYS]), so new
+     * ones are searchable within a minute; the rest (a library's first run takes hours) waits for
+     * the charger.
+     */
+    NEW_ONLY,
+
+    /** Describe nothing until the phone is plugged in. */
+    CHARGER_ONLY,
+}
+
+/**
+ * [OnBattery] as stored ([stored], its name) or, before it was, as the switch it replaced
+ * ([onlyWhileCharging]: on, wait for the charger; off, anytime); null when neither was stored.
+ */
+internal fun onBatteryFrom(stored: String?, onlyWhileCharging: Boolean?): OnBattery? =
+    stored?.let { runCatching { OnBattery.valueOf(it) }.getOrNull() }
+        ?: onlyWhileCharging?.let { if (it) OnBattery.CHARGER_ONLY else OnBattery.ANYTIME }
+
+/**
  * How large an image EasyOCR's detector reads text at. thumbsup2 (EasyOCR's default) works at up
  * to 2560 pixels on the longer side; on a phone that takes about a minute for a 12-megapixel
  * photo, so camera photos default to 1280.
@@ -61,8 +88,8 @@ data class Settings(
     val describeNewMedia: Boolean = true,
     /** Describe everything not yet described, in the background, whenever the app opens. */
     val describeOnOpen: Boolean = true,
-    /** Run only while charging (applies to all automatic describing). */
-    val onlyWhileCharging: Boolean = false,
+    /** What automatic describing does on battery. */
+    val onBattery: OnBattery = OnBattery.NEW_ONLY,
     val captions: Boolean = true,
     val ocr: Boolean = true,
     val describeVideos: Boolean = true,
@@ -103,7 +130,8 @@ class SettingsStore(private val context: Context) {
             p[LAST_CATEGORY] = s.lastCategory.name
             p[DESCRIBE_NEW] = s.describeNewMedia
             p[DESCRIBE_ON_OPEN] = s.describeOnOpen
-            p[ONLY_CHARGING] = s.onlyWhileCharging
+            p[ON_BATTERY] = s.onBattery.name
+            p.remove(ONLY_CHARGING)
             p[CAPTIONS] = s.captions
             p[OCR] = s.ocr
             p[DESCRIBE_VIDEOS] = s.describeVideos
@@ -131,7 +159,7 @@ class SettingsStore(private val context: Context) {
             lastCategory = p[LAST_CATEGORY]?.let { runCatching { Category.valueOf(it) }.getOrNull() } ?: d.lastCategory,
             describeNewMedia = p[DESCRIBE_NEW] ?: d.describeNewMedia,
             describeOnOpen = p[DESCRIBE_ON_OPEN] ?: d.describeOnOpen,
-            onlyWhileCharging = p[ONLY_CHARGING] ?: d.onlyWhileCharging,
+            onBattery = onBatteryFrom(p[ON_BATTERY], p[ONLY_CHARGING]) ?: d.onBattery,
             captions = p[CAPTIONS] ?: d.captions,
             ocr = p[OCR] ?: d.ocr,
             describeVideos = p[DESCRIBE_VIDEOS] ?: d.describeVideos,
@@ -158,6 +186,8 @@ class SettingsStore(private val context: Context) {
         val LAST_CATEGORY = stringPreferencesKey("last_category")
         val DESCRIBE_NEW = booleanPreferencesKey("describe_new_media")
         val DESCRIBE_ON_OPEN = booleanPreferencesKey("describe_on_open")
+        val ON_BATTERY = stringPreferencesKey("on_battery")
+        /** [Settings.onBattery] before it was a choice: a switch, on to wait for the charger. Read, never written. */
         val ONLY_CHARGING = booleanPreferencesKey("only_while_charging")
         val CAPTIONS = booleanPreferencesKey("captions")
         val OCR = booleanPreferencesKey("ocr")

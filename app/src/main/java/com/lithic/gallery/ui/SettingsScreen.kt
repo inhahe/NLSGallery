@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.lithic.gallery.ai.AiEngine
 import com.lithic.gallery.ai.Hardware
 import com.lithic.gallery.data.LayoutMode
+import com.lithic.gallery.data.OnBattery
 import com.lithic.gallery.data.Settings
 import com.lithic.gallery.data.TextDetail
 import kotlin.math.roundToInt
@@ -128,8 +129,16 @@ fun SettingsScreen(vm: GalleryViewModel, scroll: ScrollState, onBack: () -> Unit
                 s.describeNewMedia) { v -> set { it.copy(describeNewMedia = v) } }
             Toggle("Describe the rest when the app opens", "Everything not yet described, in the background, newest first",
                 s.describeOnOpen) { v -> set { it.copy(describeOnOpen = v) } }
-            Toggle("Only while charging", "Automatic describing waits for the charger (the AI button always works)",
-                s.onlyWhileCharging) { v -> set { it.copy(onlyWhileCharging = v) } }
+            Text("On battery", Modifier.padding(start = 16.dp, top = 12.dp))
+            for ((rule, label, about) in listOf(
+                Triple(OnBattery.NEW_ONLY, "New photos only", "Photos and videos from the last week are described " +
+                    "as they arrive; the rest waits for the charger"),
+                Triple(OnBattery.ANYTIME, "Everything", "Describe whatever is waiting, plugged in or not"),
+                Triple(OnBattery.CHARGER_ONLY, "Nothing", "Automatic describing waits for the charger"),
+            )) {
+                Choice(label, about, s.onBattery == rule) { set { it.copy(onBattery = rule) } }
+            }
+            Hint("Describing pauses while the battery is low. The AI button describes everything at once, plugged in or not.")
             Toggle("Captions", "BLIP describes what each picture shows", s.captions) { v -> set { it.copy(captions = v) } }
             Toggle("Text in pictures", "EasyOCR reads signs, screenshots and documents", s.ocr) { v -> set { it.copy(ocr = v) } }
             Toggle("Videos", "Caption three frames of each video and read the text in the middle one", s.describeVideos) { v ->
