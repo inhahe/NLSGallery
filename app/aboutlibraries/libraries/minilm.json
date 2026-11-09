@@ -1,0 +1,14 @@
+{
+  "uniqueId": "sentence-transformers/all-MiniLM-L6-v2",
+  "name": "all-MiniLM-L6-v2: search by meaning",
+  "description": "The sentence-transformers model that turns descriptions and searches into meanings to compare. The app ships its graphs, without weights (tools/export_models.py); the weights are downloaded from their publisher when the AI is set up.",
+  "website": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+  "developers": [
+    {
+      "name": "Sentence Transformers (UKPLab)"
+    }
+  ],
+  "licenses": [
+    "Apache-2.0"
+  ]
+}

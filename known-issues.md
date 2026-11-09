@@ -2,12 +2,7 @@
 
 Open bugs and technical debt, each with where it lives, how to reproduce it, and the proper fix.
 
-- **The libraries' licences are not listed in the app.** Settings → About → *Credits and
-  licences* shows the data the app ships (GeoNames, the Umm al-Qura table: `assets/NOTICE.txt`),
-  not the open-source libraries compiled in (ONNX Runtime, AndroidX, Coil, Telephoto, Media3...),
-  whose MIT and Apache licences ask for their notices in copies. The proper fix is a generated
-  list (the AboutLibraries or Google OSS Licenses Gradle plugin) shown from the same screen; it
-  adds a build dependency, so it waits for a decision.
+None open.
 
 ## Limits
 

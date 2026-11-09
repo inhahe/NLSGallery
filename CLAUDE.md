@@ -42,6 +42,11 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   (geotagged pictures included: "in paris", "hawaii"), `tools/emu-search.sh "query" out.png`
   (refuses unless the gallery is in front, so keystrokes never land in another app).
 - One APK per ABI: phones take `app-arm64-v8a-*.apk`.
+- Licences: a dependency under a licence `app/build.gradle.kts` does not allow fails the build
+  (AboutLibraries' strict mode): read the licence, then allow it there or drop the dependency.
+  After changing the `onnxruntime` or `qnn-runtime` version, run `python tools/fetch_notices.py`
+  (the build refuses until their notices match). Data or models added to the app get an entry in
+  `app/aboutlibraries`.
 - Release: `build-release.bat` (signed with the key `keystore.properties` names, kept in
   `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`).
   Release builds are minified: after touching reflection-sensitive code (ONNX Runtime, Room,

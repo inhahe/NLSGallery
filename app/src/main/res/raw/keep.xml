@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Credits and licences reads this by name (produceLibraries): resource shrinking, on by default
+     with AGP 9, would otherwise drop it as unreferenced. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/aboutlibraries" />

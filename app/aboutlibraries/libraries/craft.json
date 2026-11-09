@@ -1,0 +1,14 @@
+{
+  "uniqueId": "clovaai/CRAFT-pytorch",
+  "name": "CRAFT: finding text",
+  "description": "NAVER's text detector, as EasyOCR uses it, which finds the text in pictures. The app ships its graphs, without weights (tools/export_models.py); the weights are downloaded from their publisher when the AI is set up.",
+  "website": "https://github.com/clovaai/CRAFT-pytorch",
+  "developers": [
+    {
+      "name": "NAVER Corp."
+    }
+  ],
+  "licenses": [
+    "CRAFT-MIT"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "uniqueId": "com.github.dralshehri:hijridate",
+  "name": "hijridate: the Umm al-Qura calendar",
+  "description": "The month lengths of the Umm al-Qura calendar from 1945 to 2077, for Ramadan and Eid.",
+  "website": "https://github.com/dralshehri/hijridate",
+  "developers": [
+    {
+      "name": "Mohammed Alshehri"
+    }
+  ],
+  "licenses": [
+    "hijridate-MIT"
+  ]
+}

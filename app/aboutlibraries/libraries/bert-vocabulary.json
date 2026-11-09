@@ -1,0 +1,14 @@
+{
+  "uniqueId": "google-research/bert:vocab",
+  "name": "BERT's vocabulary",
+  "description": "The word pieces BLIP and MiniLM read text with (vocab.txt), shipped with the app.",
+  "website": "https://github.com/google-research/bert",
+  "developers": [
+    {
+      "name": "Google"
+    }
+  ],
+  "licenses": [
+    "Apache-2.0"
+  ]
+}

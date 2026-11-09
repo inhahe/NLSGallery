@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import com.lithic.gallery.ui.CreditsScreen
 import com.lithic.gallery.ui.GalleryScreen
 import com.lithic.gallery.ui.GalleryViewModel
 import com.lithic.gallery.ui.ModelsScreen
@@ -112,6 +113,7 @@ private sealed interface Route {
     data class Viewer(val index: Int) : Route
     data object Settings : Route
     data object Models : Route
+    data object Credits : Route
 }
 
 @Composable
@@ -149,6 +151,7 @@ private fun AppRoot(vm: GalleryViewModel) {
         "viewer" -> if (vm.viewerList.isEmpty()) Route.Gallery else Route.Viewer(viewerIndex)
         "settings" -> Route.Settings
         "models" -> Route.Models
+        "credits" -> Route.Credits
         else -> Route.Gallery
     }
     val covered = route != Route.Gallery
@@ -178,8 +181,10 @@ private fun AppRoot(vm: GalleryViewModel) {
             Box(Modifier.fillMaxSize().pointerInput(Unit) {}) {
                 when (route) {
                     is Route.Viewer -> ViewerScreen(vm, route.index, onBack = { routeName = "gallery" })
-                    Route.Settings -> SettingsScreen(vm, onBack = { routeName = "gallery" }, onModels = { routeName = "models" })
+                    Route.Settings -> SettingsScreen(vm, onBack = { routeName = "gallery" }, onModels = { routeName = "models" },
+                        onCredits = { routeName = "credits" })
                     Route.Models -> ModelsScreen(vm, onBack = { routeName = "gallery" })
+                    Route.Credits -> CreditsScreen(onBack = { routeName = "settings" })
                     Route.Gallery -> Unit
                 }
             }

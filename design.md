@@ -187,9 +187,15 @@ button, tabs) slides away on scroll down. A fast scroller shows the month.
 `AppRoot` (`MainActivity`) shows the gallery, and over it the viewer, settings or models
 screen. The gallery stays composed underneath (undrawn, out of the semantics tree, touches
 blocked by the covering screen), so closing one returns to the same scroll position, tab and
-search results. Settings ends with About: the version, and *Credits and licences*, the notices
-of the data the app ships (`assets/NOTICE.txt`: GeoNames' CC BY 4.0, hijridate's MIT for the
-Umm al-Qura table).
+search results. Settings ends with About: the version, and *Credits and licences*
+(`CreditsScreen`): the list AboutLibraries' Gradle plugin gathers at build time from every
+dependency's published licence, with entries of our own for the data and models
+(`app/aboutlibraries`: GeoNames, the Umm al-Qura table, BLIP, CRAFT, EasyOCR, MiniLM, BERT's
+vocabulary, each with its licence's text and copyright line), those first; a licence opens in the
+app, not on the web; then the third-party notices of the native libraries' own parts
+(`assets/licences`, `tools/fetch_notices.py`: ONNX Runtime's ThirdPartyNotices, which is in its
+repository and not its AAR, and the NOTICE.txt in Qualcomm's QNN runtime AAR, which Gradle does
+not package), reflowed to the screen.
 
 ### Viewer
 
@@ -506,3 +512,8 @@ INTERNET (model download); FOREGROUND_SERVICE_DATA_SYNC / MEDIA_PROCESSING.
 AGP 9.4.1, Kotlin 2.4.21, Gradle 9.8.2 (as the user's other Android apps), compileSdk 37,
 minSdk 29, targetSdk 36. One APK per ABI (arm64-v8a, x86_64): ONNX Runtime's native library is
 ~35 MB each. Version in `gradle.properties` (`appVersion`, `appVersionCode` checked to agree).
+Licences: AboutLibraries' strict mode fails the build for a dependency under a licence not
+allowed in `app/build.gradle.kts` (Apache 2.0, MIT, BSD-3-Clause, the data's and models', and
+Qualcomm's AI Hub Model License for its QNN runtime alone), and `checkNotices` (before every
+build) fails it when the native libraries' notices are not those of the versions built with. Its
+generated list (`R.raw.aboutlibraries`) is kept from resource shrinking (`res/raw/keep.xml`).

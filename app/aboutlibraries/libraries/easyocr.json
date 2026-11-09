@@ -1,0 +1,14 @@
+{
+  "uniqueId": "JaidedAI/EasyOCR",
+  "name": "EasyOCR: reading text",
+  "description": "EasyOCR's text reader (english_g2), and how it puts CRAFT's boxes and the reader together. The app ships its graphs, without weights (tools/export_models.py); the weights are downloaded from their publisher when the AI is set up.",
+  "website": "https://github.com/JaidedAI/EasyOCR",
+  "developers": [
+    {
+      "name": "Jaided AI"
+    }
+  ],
+  "licenses": [
+    "Apache-2.0"
+  ]
+}

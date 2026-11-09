@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.aboutlibraries.android)
 }
 
 // Release signing: a key kept outside the repository, named in keystore.properties (also outside
@@ -122,6 +123,45 @@ ksp {
 // (else the first test APK after a schema change lacks the new one).
 tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach { dependsOn("kspDebugKotlin") }
 
+// Credits and licences (Settings, About): every dependency's licence, gathered at build time, with
+// the data and models the app uses (app/aboutlibraries). A dependency under a licence not allowed
+// here fails the build, so it is looked at before it ships.
+aboutLibraries {
+    collect {
+        configPath = file("aboutlibraries")
+    }
+    license {
+        strictMode = com.mikepenz.aboutlibraries.plugin.StrictMode.FAIL
+        allowedLicenses.addAll(
+            "Apache-2.0", "MIT", "BSD-3-Clause",
+            // app/aboutlibraries/licenses: the data's and the models'.
+            "CC-BY-4.0", "hijridate-MIT", "BLIP-BSD-3-Clause", "CRAFT-MIT",
+        )
+        // Qualcomm's own licence (its AI Hub Model License: in object code inside an app only),
+        // for its QNN runtime alone.
+        allowedLicensesMap = mapOf("9f2e721d858d18d2ad0a4af38ab2283e" to listOf("com.qualcomm.qti:qnn-runtime"))
+    }
+}
+
+// The native libraries' third-party notices, for the versions the app is built with
+// (tools/fetch_notices.py writes them): checked before every build, since a version bump that
+// forgot them would ship another version's notices.
+val checkNotices by tasks.registering {
+    val wanted = listOf(
+        "onnxruntime-${libs.versions.onnxruntime.get()}-ThirdPartyNotices.txt",
+        "qnn-runtime-${libs.versions.qnn.runtime.get()}-NOTICE.txt",
+    )
+    val dir = file("src/main/assets/licences")
+    doLast {
+        val missing = wanted.filter { !File(dir, it).isFile }
+        val stale = dir.list().orEmpty().filter { it !in wanted }
+        check(missing.isEmpty() && stale.isEmpty()) {
+            "Third-party notices out of date (missing $missing, stale $stale): run python tools/fetch_notices.py"
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(checkNotices) }
+
 dependencies {
     implementation(project(":core"))
     implementation(libs.onnxruntime.android)
@@ -146,6 +186,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.exifinterface)
+    implementation(libs.aboutlibraries.compose.m3)
 
     implementation(libs.coil.compose)
     implementation(libs.telephoto.zoomable.image.coil3)

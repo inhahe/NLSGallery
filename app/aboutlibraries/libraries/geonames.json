@@ -1,0 +1,14 @@
+{
+  "uniqueId": "org.geonames:places",
+  "name": "GeoNames: place names",
+  "description": "The world's populated places, regions and countries that search by place reads (places.bin).",
+  "website": "https://www.geonames.org/",
+  "developers": [
+    {
+      "name": "GeoNames"
+    }
+  ],
+  "licenses": [
+    "CC-BY-4.0"
+  ]
+}

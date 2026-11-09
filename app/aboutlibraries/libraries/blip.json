@@ -1,0 +1,14 @@
+{
+  "uniqueId": "Salesforce/blip-image-captioning-base",
+  "name": "BLIP: captions",
+  "description": "Salesforce's image captioning model, which describes pictures. The app ships its graphs, without weights (tools/export_models.py); the weights are downloaded from their publisher when the AI is set up.",
+  "website": "https://huggingface.co/Salesforce/blip-image-captioning-base",
+  "developers": [
+    {
+      "name": "Salesforce"
+    }
+  ],
+  "licenses": [
+    "BLIP-BSD-3-Clause"
+  ]
+}
