@@ -16,6 +16,7 @@ import com.lithic.gallery.data.EmbeddingEntity
 import com.lithic.gallery.data.MediaEntity
 import com.lithic.gallery.data.Settings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -28,10 +29,12 @@ import java.security.MessageDigest
 /**
  * Describes photos and videos the way thumbsup2 does (BLIP caption, EasyOCR text, MiniLM
  * embedding of both) and stores the result. The models are opened on first use and stay open
- * until [release]; describing is serialized, one file at a time.
+ * until the last [session] ends, or [release]; describing is serialized, one file at a time.
  */
 class AiEngine(private val context: Context, private val models: ModelManager, private val dao: AiDao) {
     private val mutex = Mutex()
+    /** The [session]s going. */
+    private var sessions = 0
     private var config: Config? = null
     private var onnx: Onnx? = null
     private var blip: BlipCaptioner? = null
@@ -418,6 +421,25 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
 
     /** Closes the models, freeing their memory (about 1.5 GB with all of them open). */
     suspend fun release() = mutex.withLock { closeModels() }
+
+    /**
+     * Runs [block], work that describes file after file: the models stay open between its files,
+     * and are closed when it ends, however it ends, unless other such work still goes (a run, and a
+     * file described beside it).
+     */
+    suspend fun <T> session(block: suspend () -> T): T {
+        mutex.withLock { sessions++ }
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable) {
+                mutex.withLock { if (--sessions == 0) closeModels() }
+            }
+        }
+    }
+
+    /** Whether the models are open (for tests). */
+    internal suspend fun modelsOpen(): Boolean = mutex.withLock { config != null }
 
     private fun closeModels() {
         blip?.close(); blip = null

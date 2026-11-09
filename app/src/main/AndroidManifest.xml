@@ -56,5 +56,10 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync|mediaProcessing"
             tools:node="merge" />
+
+        <!-- The describing notification's Stop. -->
+        <receiver
+            android:name=".work.StopDescribingReceiver"
+            android:exported="false" />
     </application>
 </manifest>

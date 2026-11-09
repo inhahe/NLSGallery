@@ -10,6 +10,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.Configuration
 import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.ListenableWorker
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
@@ -17,6 +19,7 @@ import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.workDataOf
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
 import com.google.common.util.concurrent.ListenableFuture
@@ -125,8 +128,9 @@ class DescribeSchedulingTest {
         request(Run.BATTERY)
         assertThat(running().map(::kind)).containsExactly(Run.USER)
         assertThat(waiting().map(::kind)).containsExactly(Run.BATTERY)
-        // The user asks again (redescribing a file the run going has not got): the run waiting
-        // becomes theirs, at once and whatever the battery, rather than the request being dropped.
+        // The user asks again (retrying the files that failed, which the run going has not got):
+        // the run waiting becomes theirs, at once and whatever the battery, rather than the
+        // request being dropped.
         request(Run.USER)
         val mine = waiting().single()
         assertThat(kind(mine)).isEqualTo(Run.USER)
@@ -189,6 +193,31 @@ class DescribeSchedulingTest {
         assertThat(battery.id).isNotEqualTo(charger)
         assertThat(kind(battery)).isEqualTo(Run.BATTERY)
         assertThat(battery.state).isEqualTo(WorkInfo.State.ENQUEUED)
+
+        // And in "Everything" (a charger run going when it was chosen), which takes all on battery.
+        Work.stopDescribing(context)
+        charging(true)
+        request(Run.CHARGER)
+        startWaiting()
+        val another = running().single().id
+        charging(false)
+        runBlocking { Work.chargerRunStopped(context, another, OnBattery.ANYTIME) }
+        assertThat(live().map { (it.id == another) to kind(it) }).containsExactly(false to Run.BATTERY)
+    }
+
+    @Test
+    fun theNotificationsStopStopsAllDescribing() {
+        Work.describeOnCharger(context)
+        request(Run.USER)
+        request(Run.BATTERY)
+        Work.describeFile(context, item("photo"))
+        val notification = Work.describeNotification(context, running().single().id, 0, 10).notification
+        val stop = shadowOf(notification.actions.single { it.title == "Stop" }.actionIntent).savedIntent
+        assertThat(stop.component?.className).isEqualTo(StopDescribingReceiver::class.java.name)
+        StopDescribingReceiver().onReceive(context, stop)
+        assertThat(live()).isEmpty()
+        assertThat(chargerJobQueued()).isFalse()
+        assertThat(wm.getWorkInfosByTag(Work.DESCRIBE_FILE).get().filter { !it.state.isFinished }).isEmpty()
     }
 
     @Test
@@ -208,7 +237,7 @@ class DescribeSchedulingTest {
         request(Work.automatic(OnBattery.NEW_ONLY))
         startWaiting()
         val old = running().single().id
-        runBlocking { Work.replan(context, OnBattery.CHARGER_ONLY) }
+        runBlocking { Work.replan(context, OnBattery.CHARGER_ONLY, automatic = true) }
         assertThat(live().map { Triple(it.id == old, it.state, kind(it)) })
             .containsExactly(Triple(false, WorkInfo.State.ENQUEUED, Run.CHARGER))
 
@@ -217,41 +246,70 @@ class DescribeSchedulingTest {
         request(Run.USER)
         request(Run.CHARGER)
         val user = running().single().id
-        runBlocking { Work.replan(context, OnBattery.ANYTIME) }
+        runBlocking { Work.replan(context, OnBattery.ANYTIME, automatic = true) }
         assertThat(running().single().id).isEqualTo(user)
         assertThat(waiting().map(::kind)).containsExactly(Run.BATTERY)
         assertThat(waiting().single().constraints.requiresCharging()).isFalse()
 
-        // Out of "New photos only", the charger's run becomes an automatic request.
+        // A charger run going goes on, and stays what it is (unplugged, it goes by the rule then).
+        Work.stopDescribing(context)
+        request(Run.CHARGER)
+        startWaiting()
+        val charger = running().single()
+        runBlocking { Work.replan(context, OnBattery.ANYTIME, automatic = true) }
+        assertThat(running().map { it.id to kind(it) }).containsExactly(charger.id to Run.CHARGER)
+
+        // Out of "New photos only", the charger's run becomes an automatic request, when
+        // describing is automatic at all.
         Work.stopDescribing(context)
         Work.describeOnCharger(context)
-        runBlocking { Work.replan(context, OnBattery.ANYTIME) }
+        runBlocking { Work.replan(context, OnBattery.ANYTIME, automatic = true) }
         assertThat(chargerJobQueued()).isFalse()
         assertThat(live().map(::kind)).containsExactly(Run.BATTERY)
         Work.stopDescribing(context)
         Work.describeOnCharger(context)
-        runBlocking { Work.replan(context, OnBattery.NEW_ONLY) }
+        runBlocking { Work.replan(context, OnBattery.ANYTIME, automatic = false) }
+        assertThat(chargerJobQueued()).isFalse()
+        assertThat(live()).isEmpty()
+        Work.describeOnCharger(context)
+        runBlocking { Work.replan(context, OnBattery.NEW_ONLY, automatic = true) }
         assertThat(chargerJobQueued()).isTrue()
     }
 
     @Test
-    fun whatARunTakes() {
-        for (rule in OnBattery.entries) {
-            assertWithMessage("user, $rule").that(Work.scope(Run.USER, rule)).isEqualTo(Scope.ALL)
-            assertWithMessage("charger, $rule").that(Work.scope(Run.CHARGER, rule)).isEqualTo(Scope.ALL)
+    fun aRequestQueuedBeforeRunsWereTaggedIsReadByItsConstraints() {
+        fun legacy(constraints: Constraints, policy: ExistingWorkPolicy) {
+            val request = OneTimeWorkRequestBuilder<DescribeWorker>().setConstraints(constraints)
+                .setInputData(workDataOf(Work.KEY_USER to (constraints == Constraints.NONE))).build()
+            wm.enqueueUniqueWork(Work.DESCRIBE, policy, request).result.get()
         }
-        assertThat(Work.scope(Run.BATTERY, OnBattery.ANYTIME)).isEqualTo(Scope.ALL)
-        assertThat(Work.scope(Run.BATTERY, OnBattery.NEW_ONLY)).isEqualTo(Scope.NEW)
-        assertThat(Work.scope(Run.BATTERY, OnBattery.CHARGER_ONLY)).isEqualTo(Scope.WAIT)
+        // An automatic one waiting for the charger ("Only while charging"): not taken for the
+        // user's, which would describe everything at once on battery.
+        legacy(Work.constraints(Run.CHARGER), ExistingWorkPolicy.REPLACE)
+        request(Run.CHARGER)
+        assertThat(waiting().map(::kind)).containsExactly(Run.CHARGER)
+        // One the user asked for, behind a run going: still theirs.
+        Work.stopDescribing(context)
+        request(Run.USER)
+        legacy(Constraints.NONE, ExistingWorkPolicy.APPEND_OR_REPLACE)
+        val theirs = waiting().single()
+        assertThat(theirs.tags.none { it.startsWith("run-") }).isTrue()
+        request(Run.BATTERY)
+        assertThat(waiting().map { it.id to it.constraints }).containsExactly(theirs.id to Constraints.NONE)
     }
 
     @Test
-    fun aRunOnBatteryInNothingAsksForTheChargersInstead() {
-        // Asked for before "Nothing" was chosen: it takes nothing, and a charger run waits.
-        assertThat(runBlocking { Work.begin(context, Run.BATTERY, OnBattery.CHARGER_ONLY) }).isNull()
-        assertThat(live().map(::kind)).containsExactly(Run.CHARGER)
-        assertThat(runBlocking { Work.begin(context, Run.BATTERY, OnBattery.NEW_ONLY) }).isEqualTo(Scope.NEW)
-        assertThat(runBlocking { Work.begin(context, Run.USER, OnBattery.CHARGER_ONLY) }).isEqualTo(Scope.ALL)
+    fun whatARunTakes() {
+        fun begin(kind: Run, rule: OnBattery) = runBlocking { Work.begin(context, kind, rule) }
+        for (rule in OnBattery.entries) {
+            assertWithMessage("user, $rule").that(begin(Run.USER, rule)).isEqualTo(Scope.ALL)
+            assertWithMessage("charger, $rule").that(begin(Run.CHARGER, rule)).isEqualTo(Scope.ALL)
+        }
+        assertThat(begin(Run.BATTERY, OnBattery.ANYTIME)).isEqualTo(Scope.ALL)
+        assertThat(begin(Run.BATTERY, OnBattery.NEW_ONLY)).isEqualTo(Scope.NEW)
+        assertThat(live()).isEmpty()
+        // On battery, asked for before "Nothing" was chosen: it takes nothing, and a charger run waits.
+        assertThat(begin(Run.BATTERY, OnBattery.CHARGER_ONLY)).isNull()
         assertThat(live().map(::kind)).containsExactly(Run.CHARGER)
     }
 
@@ -299,18 +357,25 @@ class DescribeSchedulingTest {
         val captions = listOf(a, b, c, edge, old)
         val text = listOf(c, t, old, a)
 
-        assertThat(Work.plan(Scope.ALL, captions, text, 0, now)).isEqualTo(Work.Plan(captions, text, leftForCharger = false))
-        assertThat(Work.plan(Scope.NEW, captions, text, 100, now))
+        val none = emptySet<String>()
+
+        assertThat(Work.plan(Scope.ALL, captions, text, none, 0, now)).isEqualTo(Work.Plan(captions, text, leftForCharger = false))
+        assertThat(Work.plan(Scope.NEW, captions, text, none, 100, now))
             .isEqualTo(Work.Plan(listOf(a, b, c, edge), listOf(c, t, a), leftForCharger = true))
         // The newest first, each file counted once whichever passes it waits for, each pass in its order.
-        assertThat(Work.plan(Scope.NEW, captions, text, 3, now))
+        assertThat(Work.plan(Scope.NEW, captions, text, none, 3, now))
             .isEqualTo(Work.Plan(listOf(a, b), listOf(t, a), leftForCharger = true))
-        assertThat(Work.plan(Scope.NEW, captions, text, 1, now))
+        assertThat(Work.plan(Scope.NEW, captions, text, none, 1, now))
             .isEqualTo(Work.Plan(emptyList(), listOf(t), leftForCharger = true))
-        assertThat(Work.plan(Scope.NEW, captions, text, 0, now))
+        assertThat(Work.plan(Scope.NEW, captions, text, none, 0, now))
             .isEqualTo(Work.Plan(emptyList(), emptyList(), leftForCharger = true))
+        // Counted already today (captioned by a run since stopped, say): taken again free.
+        assertThat(Work.plan(Scope.NEW, captions, text, setOf("c"), 0, now))
+            .isEqualTo(Work.Plan(listOf(c), listOf(c), leftForCharger = true))
+        assertThat(Work.plan(Scope.NEW, captions, text, setOf("c"), 1, now))
+            .isEqualTo(Work.Plan(listOf(c), listOf(c, t), leftForCharger = true))
         // Nothing old, the budget enough: nothing left for the charger.
-        assertThat(Work.plan(Scope.NEW, listOf(a, b), listOf(a), 2, now))
+        assertThat(Work.plan(Scope.NEW, listOf(a, b), listOf(a), none, 2, now))
             .isEqualTo(Work.Plan(listOf(a, b), listOf(a), leftForCharger = false))
     }
 
@@ -322,17 +387,19 @@ class DescribeSchedulingTest {
     }
 
     @Test
-    fun theBudgetIsADays() = runBlocking {
+    fun theBudgetIsADays(): Unit = runBlocking {
         val budget = BatteryBudget(MemoryStore())
         val day = LocalDate.of(2031, 3, 4)
-        assertThat(budget.left(day)).isEqualTo(BatteryBudget.PER_DAY)
-        repeat(3) { budget.use(day) }
-        assertThat(budget.left(day)).isEqualTo(BatteryBudget.PER_DAY - 3)
+        assertThat(budget.charged(day)).isEmpty()
+        for (key in listOf("a", "b", "a", "c")) budget.use(day, key)
+        // A file counted once, however many times it is taken.
+        assertThat(budget.charged(day)).containsExactly("a", "b", "c")
         // A new day, a new budget.
         val next = day.plusDays(1)
-        assertThat(budget.left(next)).isEqualTo(BatteryBudget.PER_DAY)
-        repeat(BatteryBudget.PER_DAY + 2) { budget.use(next) }
-        assertThat(budget.left(next)).isEqualTo(0)
+        assertThat(budget.charged(next)).isEmpty()
+        budget.use(next, "d")
+        assertThat(budget.charged(next)).containsExactly("d")
+        assertThat(budget.charged(day)).isEmpty()
     }
 
     @Test

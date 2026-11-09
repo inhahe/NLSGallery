@@ -119,7 +119,8 @@ From a computer, `push-models.bat` copies them over USB instead (after
 Each one is searchable as soon as it is done. While it works, a line under the tabs says which
 round it is in, how far through, and about how long is left ("Describing pictures · 1,234 of
 5,000 · about 2 h left"); tap it for more. A notification shows the same and has a Stop
-button.
+button. Stop, there or under the AI button, holds until new photos arrive or the app is opened
+again; plugging in does not undo it.
 
 **On battery** (Settings → AI) says what automatic describing does while the phone is not
 plugged in:

@@ -46,6 +46,8 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -465,12 +467,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { app.settings.update(change) }
     }
 
+    /** One change of "On battery" at a time, so the runs are planned by the last one chosen. */
+    private val onBatteryChanges = Mutex()
+
     /** Sets "On battery"; what is queued or going is planned again by it. */
     fun setOnBattery(rule: OnBattery) {
         viewModelScope.launch {
-            if (app.settings.current().onBattery == rule) return@launch
-            app.settings.update { it.copy(onBattery = rule) }
-            Work.replan(app, rule)
+            onBatteryChanges.withLock {
+                if (app.settings.current().onBattery == rule) return@withLock
+                app.settings.update { it.copy(onBattery = rule) }
+                val s = app.settings.current()
+                Work.replan(app, rule, automatic = (s.describeNewMedia || s.describeOnOpen) && app.ai.ready(s))
+            }
         }
     }
 

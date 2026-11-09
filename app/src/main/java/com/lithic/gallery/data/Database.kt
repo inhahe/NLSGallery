@@ -401,18 +401,8 @@ interface AiDao {
     @Query("SELECT COUNT(*) FROM ai_descriptions WHERE error IS NOT NULL")
     fun observeFailureCount(): Flow<Int>
 
-    @Query("DELETE FROM ai_descriptions WHERE hash = :hash")
-    suspend fun deleteDescription(hash: String)
-
     @Query("DELETE FROM ai_embeddings WHERE hash = :hash")
     suspend fun deleteEmbeddings(hash: String)
-
-    /** Description [hash] and its embeddings, gone in one transaction, to be made again. */
-    @Transaction
-    suspend fun forget(hash: String) {
-        deleteDescription(hash)
-        deleteEmbeddings(hash)
-    }
 }
 
 @Database(

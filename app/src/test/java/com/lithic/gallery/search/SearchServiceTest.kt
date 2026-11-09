@@ -109,7 +109,8 @@ class SearchServiceTest {
             0, 1 -> if (d == null) describe(m.aiKey, if (rng.nextInt(4) == 0) "a cat on a table" else phrase(3 + rng.nextInt(4)), null)
             // Its text read.
             2 -> if (d != null && d.error == null && d.ocr == null) describe(m.aiKey, d.caption, if (rng.nextBoolean()) phrase(5) else "")
-            3 -> db.ai().forget(m.aiKey)
+            // The failed files retried: their descriptions gone.
+            3 -> if (d?.error != null) db.ai().clearFailures()
             4 -> { db.media().delete(listOf(m.id)); media.remove(m.id) }
             // A new file, sometimes a copy of an existing one (same key and date, the same description).
             5 -> add(if (rng.nextBoolean()) newMedia(m.aiKey).copy(sortDate = m.sortDate) else newMedia())

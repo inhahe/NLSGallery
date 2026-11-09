@@ -152,9 +152,10 @@ ships in assets.
   tried again until it changes or "Retry failed"; `lastModelFailure`, when the models last
   failed on it, puts it last in every pass; `describedAt` is later at every write, which the
   search index relies on), `ai_embeddings` (`aiKey`, model, vector, hash of the text embedded).
-  A description and its embedding are written in one transaction (`saveDescribed`), reset in
-  one (`forget`, and "Retry failed", `clearFailures`), and an embedding made later is saved
-  only over the text it was made from (`saveEmbeddingIfCurrent`). `locations` (by `aiKey`:
+  A description and its embedding are written in one transaction (`saveDescribed`), the failed
+  ones cleared in one ("Retry failed", `clearFailures`), and an embedding made later is saved
+  only over the text it was made from (`saveEmbeddingIfCurrent`), so a description made again
+  meanwhile ("Describe again") keeps none of the old text's. `locations` (by `aiKey`:
   where the file was taken, latitude and longitude, both null when it says nowhere; no row
   until it is read; version 5).
 - `MediaRepository.sync()` diffs MediaStore against the table (upsert changed, delete gone);
@@ -228,10 +229,15 @@ synced) and `MediaDetails`.
   failure marks the model failed (the worker retries only network errors). The app
   creates its `models` folder itself: a folder adb creates there belongs to the shell user and
   the app cannot read what is copied into it, so the copy scripts open the app first.
-- `AiEngine`: opens only the sessions a pass needs (BLIP + MiniLM for captions; CRAFT,
-  recognizer + MiniLM for text), describes one file at a time (serialized), saves description
-  and embedding together (re-embedded when OCR text arrives: the embedding records a hash of
-  its text), `release()` closes the models. `describe` reports what it did (`Outcome`). Reading
+- `AiEngine`: opens only the sessions the parts asked for need (BLIP + MiniLM for captions;
+  CRAFT, recognizer + MiniLM for text: every caller asks for one part at a time, as BLIP and the
+  text detector together would hold more memory than a pass does), describes one file at a time
+  (serialized), saves description and embedding together (re-embedded when OCR text arrives:
+  the embedding records a hash of its text). The models stay open while work that describes
+  holds a `session` (a run, a file described beside it) and close when the last ends, however it
+  ends; `release()` closes them at once (after a failure, to get the memory back).
+  `describe(again = true)` makes the parts asked for afresh, a file set aside as failed too, the
+  old description standing until the new one is saved. `describe` reports what it did (`Outcome`). Reading
   the file failing (or running out of memory reading it) is the file's fault: the error is
   saved, unless the file cannot be opened at all just now (deleted, card removed), which leaves
   it for the next run. Opening or running the models failing (running out of memory included,
@@ -497,18 +503,21 @@ and greys the toggle out where there is none.
 carries over, as *Nothing*: earlier builds stored every setting on any change, so "off" was
 stored whether chosen or not).
 
-Every describe run is one of three kinds (`Run`, kept as its request's tag): the **user's**
-(the AI button, redescribing, retrying: everything at once, no constraints), one **on battery**
+Every describe run is one of three kinds (`Run`, kept as its request's tag; one queued by a
+build before is read by its constraints): the **user's** (the AI button, "Retry failed":
+everything at once, no constraints), one **on battery**
 (automatic: battery not low), and the **charger's** (automatic in *Nothing*, and the one
 `ChargerWorker` asks for: charging too, so Android stops it when the phone is unplugged and
 queues it again). What a run takes is decided as it starts, from its kind and the rule as it then
-stands (`Work.scope`): everything, except a run on battery, which in *New photos only* takes the
+stands (`Work.begin`): everything, except a run on battery, which in *New photos only* takes the
 files taken in the last week (`Work.isNew`, by `sortDate`) newest first, at most
-`BatteryBudget.PER_DAY` (100) a day, a file counted once whatever its passes, as it is tried
-(`Work.plan`; embeddings always all), and in *Nothing* takes nothing and asks for a charger run
-instead. The budget stops a batch that counts as new (a restore of files without a date taken,
-which then go by their copy date) from draining the battery; it lives in its own DataStore, since
-it changes with every file. A run on battery that leaves files queues `ChargerWorker`.
+`BatteryBudget.PER_DAY` (100) a day (`Work.plan`; embeddings always all), and in *Nothing* takes
+nothing and asks for a charger run instead. The budget counts a file once a day, whichever of its
+passes and runs take it (the day's keys are kept, and a later run takes them again free), and
+only while the phone is not charging; it stops a batch that counts as new (a restore of files
+without a date taken, which then go by their copy date) from draining the battery. It lives in its
+own DataStore, since it changes with every file. A run on battery that leaves files queues
+`ChargerWorker`.
 
 The "describe" chain holds a run going and at most one waiting after it (a run's lists are made
 as it starts; the one waiting takes what is added or reset meanwhile). `Work.request` places a
@@ -519,11 +528,13 @@ an automatic run's constraints; one on battery over the charger's, so new files 
 behind a charger run (the run on battery queues the charger's again for the rest). When a
 charger run is stopped (`DescribeWorker` checks as it ends), not cancelled, and the phone no
 longer charges (`BatteryManager.isCharging`, Android's job scheduling's notion), it was
-unplugged: in *New photos only* `Work.chargerRunStopped` replaces it, and what waited behind it,
-with a run on battery. Changing the rule (`Work.replan`) starts a run on battery that is going
-again, makes the automatic runs queued what the new rule asks for, and turns a queued
-`ChargerWorker` into an automatic request out of *New photos only*. Stop
-(`Work.stopDescribing`) cancels the charger's queue and single files' work too. The AI dialog says what waits for the
+unplugged: unless the rule is *Nothing*, `Work.chargerRunStopped` replaces it, and what waited
+behind it, with a run on battery. Changing the rule (`Work.replan`, one change at a time) starts
+a run on battery that is going again, makes the automatic runs waiting what the new rule asks
+for (a charger run going goes on as it is), and turns a queued `ChargerWorker` into an automatic
+request out of *New photos only*, when describing is automatic at all. Stop, in the AI dialog
+and in the notification (`StopDescribingReceiver`), is `Work.stopDescribing`: the run going, the
+one waiting, the charger's queue and single files' work. The AI dialog says what waits for the
 charger, or that nothing describes by itself when both automatic switches are off.
 
 Describing runs in two passes: captions (and embeddings) for every file newest first, ~2 s

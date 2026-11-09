@@ -12,7 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 
-/** Descriptions and their embeddings go together: written, forgotten and retried as one. */
+/** Descriptions and their embeddings go together: written, replaced and retried as one. */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [35])
 class AiDaoTest {
@@ -29,6 +29,12 @@ class AiDaoTest {
     fun close() = db.close()
 
     private fun embedding(key: String) = EmbeddingEntity(key, "m", ByteArray(8), "t$key")
+
+    /** Description [key] and its embeddings gone, as no part of the app does any more (a guard stays for it). */
+    private fun erase(key: String) {
+        db.openHelper.writableDatabase.execSQL("DELETE FROM ai_descriptions WHERE hash = ?", arrayOf(key))
+        db.openHelper.writableDatabase.execSQL("DELETE FROM ai_embeddings WHERE hash = ?", arrayOf(key))
+    }
 
     @Test
     fun retryingFailuresForgetsTheirEmbeddingsToo() = runBlocking {
@@ -102,9 +108,9 @@ class AiDaoTest {
         dao.saveDescribed(DescriptionEntity("k", "a cat", null, "", 2, null), embedding("k"))
         assertThat(dao.countModelFailure("k", "boom", 3, max = 3)).isFalse()
         assertThat(dao.description("k")!!.modelFailures).isEqualTo(0)
-        // Or reset ("Describe again") before it was blamed: nothing comes back.
+        // Or gone before it was blamed: nothing comes back.
         dao.noteModelFailure("j", "", 1)
-        dao.forget("j")
+        erase("j")
         assertThat(dao.countModelFailure("j", "boom", 3, max = 3)).isFalse()
         assertThat(dao.description("j")).isNull()
     }
@@ -117,8 +123,8 @@ class AiDaoTest {
         dao.saveUnembedded(first.copy(ocr = "SALE", describedAt = 2))
         assertThat(dao.saveEmbeddingIfCurrent(embedding("k"), first, 3)).isFalse()
         assertThat(dao.embedding("k", "m")).isNull()
-        // Reset meanwhile: nothing comes back.
-        dao.forget("k")
+        // Gone meanwhile: nothing comes back.
+        erase("k")
         assertThat(dao.saveEmbeddingIfCurrent(embedding("k"), first, 4)).isFalse()
         assertThat(dao.description("k")).isNull()
         // Unchanged: saved, with a new describedAt for the search index.
@@ -128,11 +134,4 @@ class AiDaoTest {
         assertThat(dao.description("k")!!.describedAt).isEqualTo(5)
     }
 
-    @Test
-    fun forgettingTakesTheEmbeddingWithIt() = runBlocking {
-        dao.saveDescribed(DescriptionEntity("k", "a cat", null, "", 1, null), embedding("k"))
-        dao.forget("k")
-        assertThat(dao.description("k")).isNull()
-        assertThat(dao.embedding("k", "m")).isNull()
-    }
 }

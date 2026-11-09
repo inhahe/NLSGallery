@@ -1,6 +1,10 @@
 package com.lithic.gallery
 
 import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -20,7 +24,8 @@ import org.junit.runner.RunWith
 /**
  * What describing records when a file fails: nothing when the file cannot be opened now (so a
  * later run tries again), the error when it opens but cannot be decoded (so it is not retried
- * until it changes), and a file on record as failed is left alone. Needs the caption model in
+ * until it changes), and a file on record as failed is left alone, unless described afresh; and
+ * the models' sessions. Needs the caption model in
  * the app's folder (push-models.bat debug). The test files are pending MediaStore entries in
  * Pictures/, which every device has, so nothing is left behind.
  */
@@ -35,6 +40,86 @@ class DescribeFailureTest {
     @Before
     fun needsModels() {
         assumeTrue("the caption model is not on this device: run push-models.bat debug", app.ai.ready(captionsOnly))
+    }
+
+    /** Description [key] and its embeddings gone: what the test made, cleared away. */
+    private fun erase(key: String) {
+        app.db.openHelper.writableDatabase.execSQL("DELETE FROM ai_descriptions WHERE hash = ?", arrayOf(key))
+        app.db.openHelper.writableDatabase.execSQL("DELETE FROM ai_embeddings WHERE hash = ?", arrayOf(key))
+    }
+
+    /** Runs [block] with a picture (a drawn scene) in a pending MediaStore entry, deleted after. */
+    private suspend fun withPicture(block: suspend (Uri) -> Unit) {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "describe-failure-test-picture.jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)!!
+        try {
+            val bitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
+            Canvas(bitmap).apply {
+                drawColor(Color.rgb(120, 170, 230))
+                drawRect(0f, 330f, 640f, 480f, Paint().apply { color = Color.rgb(60, 140, 60) })
+                drawCircle(500f, 110f, 60f, Paint().apply { color = Color.YELLOW })
+                drawText("OPEN", 60f, 250f, Paint().apply { color = Color.BLACK; textSize = 120f })
+            }
+            resolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+            block(uri)
+        } finally {
+            resolver.delete(uri, null, null)
+        }
+    }
+
+    @Test
+    fun describingAgainRemakesThePartsAskedFor() = runBlocking {
+        val key = "describe-failure-test-again-${System.nanoTime()}"
+        try {
+            withPicture { uri ->
+                // Set aside as failed: left alone, but tried again when asked for afresh.
+                dao.upsertDescription(DescriptionEntity(key, "older words", null, "", 1L, "it failed before", 2, 1L))
+                assertThat(app.ai.describe(item(uri, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
+                assertThat(app.ai.describe(item(uri, key), captionsOnly, again = true)).isEqualTo(AiEngine.Outcome.Described)
+                val made = dao.description(key)!!
+                assertThat(made.error).isNull()
+                assertThat(made.modelFailures).isEqualTo(0)
+                assertThat(made.caption).isNotEqualTo("older words")
+                // A caption there already: nothing to make, unless asked for afresh; the text, not
+                // asked for, kept as it was.
+                dao.upsertDescription(made.copy(caption = "older words", ocr = "OLD"))
+                assertThat(app.ai.describe(item(uri, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
+                assertThat(app.ai.describe(item(uri, key), captionsOnly, again = true)).isEqualTo(AiEngine.Outcome.Described)
+                assertThat(dao.description(key)!!.caption).isEqualTo(made.caption)
+                assertThat(dao.description(key)!!.ocr).isEqualTo("OLD")
+            }
+        } finally {
+            app.ai.release()
+            erase(key)
+        }
+    }
+
+    @Test
+    fun theModelsCloseWhenTheLastSessionEnds() = runBlocking {
+        val key = "describe-failure-test-session-${System.nanoTime()}"
+        try {
+            withPicture { uri ->
+                app.ai.release()
+                app.ai.session {
+                    // A file described beside a run: when it ends, the run still has the models.
+                    app.ai.session { app.ai.describe(item(uri, key), captionsOnly, again = true) }
+                    assertThat(app.ai.modelsOpen()).isTrue()
+                }
+                assertThat(app.ai.modelsOpen()).isFalse()
+                // However the last ends.
+                runCatching { app.ai.session { app.ai.describe(item(uri, key), captionsOnly, again = true); error("stopped") } }
+                assertThat(app.ai.modelsOpen()).isFalse()
+            }
+        } finally {
+            app.ai.release()
+            erase(key)
+        }
     }
 
     private fun item(uri: Uri, key: String) = MediaEntity(
@@ -53,7 +138,7 @@ class DescribeFailureTest {
             assertThat(app.ai.describe(item(gone, key), captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
             assertThat(dao.description(key)).isNull()
         } finally {
-            dao.deleteDescription(key)
+            erase(key)
         }
     }
 
@@ -80,7 +165,7 @@ class DescribeFailureTest {
             assertThat(dao.description(key)).isEqualTo(failed)
         } finally {
             resolver.delete(uri, null, null)
-            dao.deleteDescription(key)
+            erase(key)
         }
     }
 
@@ -96,7 +181,7 @@ class DescribeFailureTest {
             // Made, it is not made again.
             assertThat(app.ai.embedMissing(d, captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
         } finally {
-            dao.forget(key)
+            erase(key)
         }
     }
 
@@ -106,12 +191,13 @@ class DescribeFailureTest {
         try {
             val d = DescriptionEntity(key, "a dog on a beach", "", "", 1L, null)
             dao.saveUnembedded(d)
-            dao.forget(key) // "Describe again", between the listing and the embedding
+            // Described again with other words ("Describe again"), between the listing and the embedding.
+            dao.saveUnembedded(d.copy(caption = "a dog running on a beach", describedAt = 2L))
             assertThat(app.ai.embedMissing(d, captionsOnly)).isEqualTo(AiEngine.Outcome.Skipped)
-            assertThat(dao.description(key)).isNull()
+            assertThat(dao.description(key)!!.caption).isEqualTo("a dog running on a beach")
             assertThat(dao.embedding(key, MiniLmEmbedder.MODEL_ID)).isNull()
         } finally {
-            dao.forget(key)
+            erase(key)
         }
     }
 
@@ -142,7 +228,7 @@ class DescribeFailureTest {
             assertThat(d.lastModelFailure).isNull()
         } finally {
             resolver.delete(uri, null, null)
-            dao.forget(key)
+            erase(key)
         }
     }
 
@@ -169,7 +255,7 @@ class DescribeFailureTest {
             assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
         } finally {
             app.db.media().delete(listOf(media.id))
-            dao.forget(key)
+            erase(key)
         }
     }
 
@@ -191,7 +277,7 @@ class DescribeFailureTest {
             assertThat(dao.description(key)?.error).isNotNull()
         } finally {
             resolver.delete(uri, null, null)
-            dao.deleteDescription(key)
+            erase(key)
         }
     }
 }

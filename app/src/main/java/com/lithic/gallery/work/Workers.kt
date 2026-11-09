@@ -2,7 +2,10 @@ package com.lithic.gallery.work
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.BatteryManager
 import android.os.Build
@@ -44,11 +47,11 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Who asked for a describe run, which says what it waits for ([Work.constraints]) and what it
- * takes ([Work.scope]); kept as the request's tag. In order of precedence: requests merge into
+ * takes ([Work.begin]); kept as the request's tag. In order of precedence: requests merge into
  * the first of theirs ([Work.merge]).
  */
 internal enum class Run {
-    /** The AI button, redescribing, retrying: everything, at once, whatever the battery. */
+    /** The AI button, retrying the files that failed: everything, at once, whatever the battery. */
     USER,
 
     /** Automatic, without the charger: waits for the battery not to be low; takes what "On battery" allows. */
@@ -64,16 +67,13 @@ internal enum class Run {
     val tag: String get() = "run-$name"
 }
 
-/** What a describe run takes ([Work.scope]). */
+/** What a describe run takes ([Work.begin]). */
 internal enum class Scope {
     /** Every file waiting. */
     ALL,
 
     /** The new files ([Work.isNew]), newest first, as many as the day's [BatteryBudget] allows. */
     NEW,
-
-    /** Nothing: it waits for the charger (a run on battery asked for before "Nothing" was chosen). */
-    WAIT,
 }
 
 /** Scheduling of the app's background work. */
@@ -131,7 +131,7 @@ object Work {
         requests.withLock {
             // The one waiting may start between reading it and changing it: then look again.
             repeat(3) {
-                val infos = wm.getWorkInfosForUniqueWorkFlow(DESCRIBE).first()
+                val infos = wm.infos(DESCRIBE)
                 val waiting = infos.filter { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
                 val merged = merge(waiting.map(::kindOf) + kind)
                 if (infos.none { it.state == WorkInfo.State.RUNNING }) {
@@ -155,13 +155,23 @@ object Work {
      * The request that serves all of [kinds]: the user's (everything, at once), else one on
      * battery (it starts without the charger, and queues the charger's run for what it leaves).
      */
-    internal fun merge(kinds: List<Run>): Run = kinds.minBy { it.ordinal }
+    internal fun merge(kinds: List<Run>): Run = kinds.min()
 
     /** [Run] by the tags of its request; null for one queued before runs were tagged. */
     internal fun runOf(tags: Set<String>): Run? = Run.entries.firstOrNull { it.tag in tags }
 
-    /** One queued before runs were tagged counts as the user's, so it is never taken for less. */
-    private fun kindOf(info: WorkInfo): Run = runOf(info.tags) ?: Run.USER
+    /**
+     * The [Run] of request [info]. One queued before runs were tagged is told by its constraints,
+     * which were those of its kind: the user's had none.
+     */
+    private fun kindOf(info: WorkInfo): Run = runOf(info.tags) ?: when {
+        info.constraints.requiresCharging() -> Run.CHARGER
+        info.constraints.requiresBatteryNotLow() -> Run.BATTERY
+        else -> Run.USER
+    }
+
+    /** The requests of unique work [name], whatever their state. */
+    private suspend fun WorkManager.infos(name: String): List<WorkInfo> = getWorkInfosForUniqueWork(name).await()
 
     private fun describeRequest(kind: Run, id: UUID? = null): OneTimeWorkRequest =
         OneTimeWorkRequestBuilder<DescribeWorker>()
@@ -175,39 +185,38 @@ object Work {
         if (kind == Run.USER) Constraints.NONE
         else Constraints.Builder().setRequiresBatteryNotLow(true).setRequiresCharging(kind == Run.CHARGER).build()
 
-    /** What a run of [kind] takes under [rule], as it starts (the rule may have changed since it was asked for). */
-    internal fun scope(kind: Run, rule: OnBattery): Scope = when {
+    /**
+     * What a run of [kind] takes, as it starts under [rule] (which may have changed since it was
+     * asked for): everything, but a run on battery in [OnBattery.NEW_ONLY] the new files, and in
+     * [OnBattery.CHARGER_ONLY] nothing (null), asking for the charger's run instead.
+     */
+    internal suspend fun begin(context: Context, kind: Run, rule: OnBattery): Scope? = when {
         kind != Run.BATTERY || rule == OnBattery.ANYTIME -> Scope.ALL
         rule == OnBattery.NEW_ONLY -> Scope.NEW
-        else -> Scope.WAIT
-    }
-
-    /**
-     * What a run of [kind] takes, as it starts under [rule]; null when it takes nothing: a run on
-     * battery asked for before "Nothing" was chosen, which asks for the charger's instead.
-     */
-    internal suspend fun begin(context: Context, kind: Run, rule: OnBattery): Scope? {
-        val scope = scope(kind, rule)
-        if (scope != Scope.WAIT) return scope
-        Log.i(TAG, "on battery automatic describing waits for the charger")
-        request(context, Run.CHARGER)
-        return null
+        else -> {
+            Log.i(TAG, "on battery automatic describing waits for the charger")
+            request(context, Run.CHARGER)
+            null
+        }
     }
 
     /** The files a run describes, pass by pass, and whether it left any for the charger. */
     internal data class Plan(val captions: List<MediaEntity>, val text: List<MediaEntity>, val leftForCharger: Boolean)
 
     /**
-     * What a run of [scope] ([Scope.ALL] or [Scope.NEW]) describes of the files waiting for
-     * [captions] and for [text], each list in its pass's order: all of them, or the files new at
-     * [now] (epoch ms), newest first, at most [budget] of them, a file counted once whichever
+     * What a run of [scope] describes of the files waiting for [captions] and for [text], each
+     * list in its pass's order: all of them, or ([Scope.NEW]) the files new at [now] (epoch ms):
+     * those [charged] to the day's budget already (a pass of theirs still waits, or a run was
+     * stopped), and the newest others, at most [budget] of them, a file counted once whichever
      * passes it waits for.
      */
-    internal fun plan(scope: Scope, captions: List<MediaEntity>, text: List<MediaEntity>, budget: Int, now: Long): Plan {
+    internal fun plan(scope: Scope, captions: List<MediaEntity>, text: List<MediaEntity>, charged: Set<String>, budget: Int, now: Long): Plan {
         if (scope == Scope.ALL) return Plan(captions, text, leftForCharger = false)
-        val chosen = (captions + text).filter { isNew(it.sortDate, now) }
+        val new = (captions + text).filter { isNew(it.sortDate, now) }
             .sortedByDescending { it.sortDate }
-            .map { it.aiKey }.distinct().take(budget).toHashSet()
+            .map { it.aiKey }.distinct()
+        val chosen = new.filterTo(HashSet()) { it in charged }
+        new.filter { it !in charged }.take(budget).toCollection(chosen)
         val c = captions.filter { it.aiKey in chosen }
         val t = text.filter { it.aiKey in chosen }
         return Plan(c, t, leftForCharger = c.size < captions.size || t.size < text.size)
@@ -228,15 +237,16 @@ object Work {
     /**
      * The charger's run [id] was stopped. Unless it was cancelled (Stop), or the phone still
      * charges (stopped for another reason, Android queues it again as it is), the phone was
-     * unplugged: in [OnBattery.NEW_ONLY] ([rule]) a run on battery takes its place, which goes on
-     * with the new files and queues the charger's run again for the rest. In
-     * [OnBattery.CHARGER_ONLY] it waits for the charger, queued again by Android.
+     * unplugged. Under [rule] [OnBattery.CHARGER_ONLY] it waits for the charger, queued again by
+     * Android; under the others a run on battery takes its place, and what waited behind it: in
+     * [OnBattery.NEW_ONLY] it goes on with the new files and queues the charger's run again for
+     * the rest.
      */
     internal suspend fun chargerRunStopped(context: Context, id: UUID, rule: OnBattery) {
-        if (rule != OnBattery.NEW_ONLY || charging(context)) return
+        if (rule == OnBattery.CHARGER_ONLY || charging(context)) return
         val wm = WorkManager.getInstance(context)
         requests.withLock {
-            val infos = wm.getWorkInfosForUniqueWorkFlow(DESCRIBE).first()
+            val infos = wm.infos(DESCRIBE)
             // Still going, or already queued again by Android; not cancelled, nor replaced.
             val state = infos.firstOrNull { it.id == id }?.state
             if (state != WorkInfo.State.RUNNING && state != WorkInfo.State.ENQUEUED) return
@@ -248,23 +258,28 @@ object Work {
 
     /**
      * "On battery" became [rule]. A run on battery going (which took what the old rule allowed)
-     * starts again; the other automatic runs are made what the rule asks for (one going, for when
-     * it starts again); the user's stay. Out of [OnBattery.NEW_ONLY], the charger's run, if
-     * queued, becomes an automatic request.
+     * starts again; the automatic runs waiting become what the rule asks for; the user's stay,
+     * and a charger run going goes on (unplugged, [chargerRunStopped] goes by the rule then).
+     * Out of [OnBattery.NEW_ONLY], the charger's run, if queued, becomes an automatic request,
+     * when describing is [automatic] at all.
      */
-    internal suspend fun replan(context: Context, rule: OnBattery) {
+    internal suspend fun replan(context: Context, rule: OnBattery, automatic: Boolean) {
         val wm = WorkManager.getInstance(context)
-        if (rule != OnBattery.NEW_ONLY && wm.getWorkInfosForUniqueWorkFlow(DESCRIBE_ON_CHARGER).first().any { !it.state.isFinished }) {
+        if (rule != OnBattery.NEW_ONLY && wm.infos(DESCRIBE_ON_CHARGER).any { !it.state.isFinished }) {
             wm.cancelUniqueWork(DESCRIBE_ON_CHARGER).await()
-            request(context, automatic(rule))
+            if (automatic) request(context, automatic(rule))
         }
         requests.withLock {
-            val live = wm.getWorkInfosForUniqueWorkFlow(DESCRIBE).first().filter { !it.state.isFinished }
+            val live = wm.infos(DESCRIBE).filter { !it.state.isFinished }
             fun under(info: WorkInfo) = kindOf(info).let { if (it == Run.USER) it else automatic(rule) }
             if (live.any { it.state == WorkInfo.State.RUNNING && kindOf(it) == Run.BATTERY }) {
                 wm.enqueueUniqueWork(DESCRIBE, ExistingWorkPolicy.REPLACE, describeRequest(merge(live.map(::under)))).await()
             } else {
-                for (info in live) if (under(info) != kindOf(info)) wm.updateWork(describeRequest(under(info), info.id)).await()
+                for (info in live) {
+                    if (info.state != WorkInfo.State.RUNNING && under(info) != kindOf(info)) {
+                        wm.updateWork(describeRequest(under(info), info.id)).await()
+                    }
+                }
             }
         }
     }
@@ -285,14 +300,13 @@ object Work {
     /** The unique work describing the file of media id [id] afresh: whether it is waiting or going. */
     fun fileWork(id: Long): String = "$DESCRIBE_FILE-$id"
 
-    /** Whether a describe run is going. */
-    internal suspend fun describing(context: Context): Boolean =
-        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(DESCRIBE).first().any { it.state == WorkInfo.State.RUNNING }
-
     /** Whether the phone is charging, as Android's job scheduling counts it (a weak charger the phone drains on may not count). */
     fun charging(context: Context): Boolean = context.getSystemService(BatteryManager::class.java)?.isCharging ?: false
 
-    /** Stops describing until something asks again: the run going, the one waiting, the charger's, and single files. */
+    /**
+     * Stops describing until something asks again: the run going, the one waiting, the
+     * charger's, and single files. The AI dialog's Stop, and the notification's ([StopDescribingReceiver]).
+     */
     fun stopDescribing(context: Context) {
         val wm = WorkManager.getInstance(context)
         wm.cancelUniqueWork(DESCRIBE)
@@ -345,7 +359,9 @@ object Work {
 
     /** @param phase "embeddings", "captions" or "text": which pass the run is in. */
     internal fun describeNotification(context: Context, id: java.util.UUID, done: Int, total: Int, phase: String = "captions"): ForegroundInfo {
-        val cancel = WorkManager.getInstance(context).createCancelPendingIntent(id)
+        // Stop stops all describing, as the AI dialog's does, not this run alone.
+        val cancel = PendingIntent.getBroadcast(context, 0, Intent(context, StopDescribingReceiver::class.java),
+            PendingIntent.FLAG_IMMUTABLE)
         val n = NotificationCompat.Builder(context, CHANNEL_AI)
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setContentTitle("Describing photos for search")
@@ -396,17 +412,19 @@ object Work {
  * never counted against a file.
  *
  * What a run takes is decided as it starts, by who asked for it ([Run]) and "On battery" as it
- * then stands ([Work.scope]).
+ * then stands ([Work.begin]).
  */
 class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val kind = Work.runOf(tags) ?: if (inputData.getBoolean(Work.KEY_USER, false)) Run.USER else Run.BATTERY
+        val app = applicationContext as GalleryApp
         try {
-            return describe(kind)
+            // The models stay open between files, and close when the run ends (whichever way), unless
+            // a file described beside it still uses them.
+            return app.ai.session { describe(kind) }
         } finally {
             // Android stops a run on the charger when the phone is unplugged (and on Stop).
             if (isStopped && kind == Run.CHARGER) withContext(NonCancellable) {
-                val app = applicationContext as GalleryApp
                 Work.chargerRunStopped(applicationContext, id, app.settings.current().onBattery)
             }
         }
@@ -428,10 +446,11 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         // On battery in "new photos only": the new files, up to the day's budget; the charger's
         // run takes the rest. Embeddings take milliseconds: always all.
         val budget = BatteryBudget(applicationContext).takeIf { scope == Scope.NEW }
+        val charged = budget?.charged(LocalDate.now()).orEmpty().toHashSet()
         val plan = Work.plan(scope,
             if (s.captions) dao.undescribed(s.describeVideos, captions = true, ocr = false) else emptyList(),
             if (s.ocr) dao.withoutText(s.describeVideos) else emptyList(),
-            budget?.left(LocalDate.now()) ?: Int.MAX_VALUE, started)
+            charged, (BatteryBudget.PER_DAY - charged.size).coerceAtLeast(0), started)
         if (plan.leftForCharger && !isStopped) Work.describeOnCharger(applicationContext)
         val captionPass = plan.captions
         val textPass = plan.text
@@ -485,11 +504,14 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
         suspend fun count(key: String, message: String) {
             if (key !in counted && app.ai.recordModelFailure(key, message)) counted.add(key)
         }
-        // Each file a run on battery tries counts against the day's budget, once whatever its passes.
-        val charged = HashSet<String>()
+        // Each file a run on battery tries while the phone is not charging counts against the
+        // day's budget, once a day whatever its passes and runs.
         fun describing(part: AiEngine.Part) = DescribePass<MediaEntity>(
             attempt = {
-                if (budget != null && charged.add(it.aiKey)) budget.use(LocalDate.now())
+                if (budget != null && it.aiKey !in charged && !Work.charging(applicationContext)) {
+                    budget.use(LocalDate.now(), it.aiKey)
+                    charged.add(it.aiKey)
+                }
                 app.ai.describe(it, s, captions = part == AiEngine.Part.CAPTIONS, ocr = part == AiEngine.Part.TEXT)
             },
             probe = { app.ai.modelsStillWork(part, it, s) },
@@ -534,7 +556,6 @@ class DescribeWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 if (embedding.run(embedAfter, stop) != DescribePass.End.Done) unfinished = true
             }
         } finally {
-            app.ai.release()
             app.search.invalidate()
         }
         if (unfinished && !isStopped) {
@@ -567,8 +588,10 @@ class ChargerWorker(context: Context, params: WorkerParameters) : CoroutineWorke
  * Describes one file afresh ([Work.describeFile]): "Describe now" or "Describe again" on it. It
  * runs beside a describe run going rather than after it (which, a library's first, takes hours),
  * the two taking the models a file at a time ([AiEngine] holds one lock); the file's description
- * stays as it was until the new one is saved. When the models fail on it, the description stays
- * as it was (one not made yet is left to the runs, which try it after the others).
+ * stays as it was until the new one is saved. Its caption, then its text, as the runs' passes
+ * go: BLIP and the text detector open together would hold more memory than a run ever does.
+ * When the models fail on it, the rest of its description stays as it was (one not made yet is
+ * left to the runs, which try it after the others).
  */
 class DescribeFileWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -576,20 +599,28 @@ class DescribeFileWorker(context: Context, params: WorkerParameters) : Coroutine
         val s = app.settings.current()
         if (!app.ai.ready(s)) return Result.success()
         val item = app.db.media().byId(inputData.getLong(Work.KEY_MEDIA, -1)) ?: return Result.success()
-        val outcome = try {
-            app.ai.describe(item, s, again = true)
-        } finally {
-            withContext(NonCancellable) {
-                // A run going uses the models next: they stay open for it.
-                if (!Work.describing(applicationContext)) app.ai.release()
+        app.ai.session {
+            try {
+                for (part in listOf(AiEngine.Part.CAPTIONS, AiEngine.Part.TEXT)) {
+                    val captions = part == AiEngine.Part.CAPTIONS
+                    if (if (captions) !s.captions else !s.ocr) continue
+                    val outcome = app.ai.describe(item, s, captions = captions, ocr = !captions, again = true)
+                    Log.i(TAG, "file ${item.id}, ${part.phase}: $outcome")
+                    if (outcome != AiEngine.Outcome.Described) break
+                }
+            } finally {
+                app.search.invalidate()
             }
-            app.search.invalidate()
         }
-        Log.i(TAG, "file ${item.id}: $outcome")
         return Result.success()
     }
 
     private companion object { const val TAG = "DescribeFileWorker" }
+}
+
+/** The describing notification's Stop: stops describing as the AI dialog's Stop does ([Work.stopDescribing]). */
+class StopDescribingReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) = Work.stopDescribing(context)
 }
 
 /** Woken by MediaStore when photos or videos change: updates the library, describes what is new, re-arms. */
