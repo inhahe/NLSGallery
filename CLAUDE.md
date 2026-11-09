@@ -43,10 +43,13 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   (refuses unless the gallery is in front, so keystrokes never land in another app).
 - One APK per ABI: phones take `app-arm64-v8a-*.apk`.
 - Licences: a dependency under a licence `app/build.gradle.kts` does not allow fails the build
-  (AboutLibraries' strict mode): read the licence, then allow it there or drop the dependency.
-  After changing the `onnxruntime` or `qnn-runtime` version, run `python tools/fetch_notices.py`
-  (the build refuses until their notices match). Data or models added to the app get an entry in
-  `app/aboutlibraries`.
+  (AboutLibraries' strict mode): read the licence, then allow it there or drop the dependency. A
+  new MIT or BSD library needs its own licence (with its copyright line) in
+  `app/aboutlibraries/licenses` and an entry naming it in `libraries`: `CreditsTest` fails for a
+  shown licence that is SPDX's template. After changing the `onnxruntime`, `qnn-ep` or
+  `qnn-runtime` version, run `python tools/fetch_notices.py` (the build refuses until their
+  notices match). Data or models the app uses, and code reproduced from another project, get an
+  entry in `app/aboutlibraries` (tag `data`, `model` or `port`).
 - Release: `build-release.bat` (signed with the key `keystore.properties` names, kept in
   `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`).
   Release builds are minified: after touching reflection-sensitive code (ONNX Runtime, Room,

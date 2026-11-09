@@ -1,0 +1,15 @@
+{
+  "uniqueId": "huggingface/tokenizers",
+  "name": "Hugging Face Tokenizers: reading text",
+  "description": "BERT's WordPiece tokenizer (normalizer, pre-tokenizer, WordPiece, decoder), as tokenizers runs it for BLIP and MiniLM, reproduced.",
+  "website": "https://github.com/huggingface/tokenizers",
+  "developers": [
+    {
+      "name": "Hugging Face"
+    }
+  ],
+  "licenses": [
+    "Apache-2.0"
+  ],
+  "tag": "port"
+}

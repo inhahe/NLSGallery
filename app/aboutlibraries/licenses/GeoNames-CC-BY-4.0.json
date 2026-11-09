@@ -1,6 +1,6 @@
 {
-  "name": "Creative Commons Attribution 4.0 International",
+  "name": "Creative Commons Attribution 4.0 International (GeoNames)",
   "url": "https://creativecommons.org/licenses/by/4.0/",
   "content": "GeoNames (https://www.geonames.org/) is licensed under the Creative Commons Attribution 4.0 International License: https://creativecommons.org/licenses/by/4.0/legalcode\n\nChanges: NLSGallery keeps the populated places of cities1000 except the historical, abandoned and destroyed ones, their admin1 regions from admin1CodesASCII and their countries from countryInfo, packed into places.bin, with a few everyday names of countries added (\"usa\", \"uk\", \"holland\").",
-  "hash": "CC-BY-4.0"
+  "hash": "GeoNames-CC-BY-4.0"
 }

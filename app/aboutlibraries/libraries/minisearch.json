@@ -1,0 +1,15 @@
+{
+  "uniqueId": "lucaong/minisearch",
+  "name": "MiniSearch: search by words",
+  "description": "Search by words is a port of MiniSearch 7.2: its tokenizer, BM25+ ranking, prefix and fuzzy matching.",
+  "website": "https://github.com/lucaong/minisearch",
+  "developers": [
+    {
+      "name": "Luca Ongaro"
+    }
+  ],
+  "licenses": [
+    "MiniSearch-MIT"
+  ],
+  "tag": "port"
+}

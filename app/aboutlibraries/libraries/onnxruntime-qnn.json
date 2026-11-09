@@ -1,0 +1,6 @@
+{
+  "uniqueId": "com.qualcomm.qti:onnxruntime-android-qnn",
+  "licenses": [
+    "onnxruntime-qnn-MIT"
+  ]
+}

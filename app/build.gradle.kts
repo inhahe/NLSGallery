@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.util.regex.Pattern
 
 plugins {
     alias(libs.plugins.android.application)
@@ -134,21 +135,33 @@ aboutLibraries {
         strictMode = com.mikepenz.aboutlibraries.plugin.StrictMode.FAIL
         allowedLicenses.addAll(
             "Apache-2.0", "MIT", "BSD-3-Clause",
-            // app/aboutlibraries/licenses: the data's and the models'.
-            "CC-BY-4.0", "hijridate-MIT", "BLIP-BSD-3-Clause", "CRAFT-MIT",
+            // app/aboutlibraries/licenses: the data's, the models', the ported code's, and the MIT
+            // and BSD libraries' with their copyright lines (CreditsTest checks none is a template).
+            "GeoNames-CC-BY-4.0", "hijridate-MIT", "BLIP-BSD-3-Clause", "CRAFT-MIT", "MiniSearch-MIT",
+            "Pillow-MIT-CMU", "PyTorch-BSD-3-Clause", "onnxruntime-MIT", "onnxruntime-qnn-MIT", "protobuf-BSD-3-Clause",
         )
         // Qualcomm's own licence (its AI Hub Model License: in object code inside an app only),
         // for its QNN runtime alone.
-        allowedLicensesMap = mapOf("9f2e721d858d18d2ad0a4af38ab2283e" to listOf("com.qualcomm.qti:qnn-runtime"))
+        allowedLicensesMap = mapOf(
+            "9f2e721d858d18d2ad0a4af38ab2283e" to listOf("com.qualcomm.qti:qnn-runtime"),
+            "Qualcomm-AI-Hub-Model-License" to listOf("com.qualcomm.qti:qnn-runtime"),
+        )
+    }
+    library {
+        // A library without a licence is not shipped unread.
+        requireLicense = true
+        // BOMs align versions and ship no code.
+        exclusionPatterns.add(Pattern.compile(".*-bom"))
     }
 }
 
 // The native libraries' third-party notices, for the versions the app is built with
 // (tools/fetch_notices.py writes them): checked before every build, since a version bump that
 // forgot them would ship another version's notices.
-val checkNotices by tasks.registering {
+val checkNotices = tasks.register("checkNotices") {
     val wanted = listOf(
         "onnxruntime-${libs.versions.onnxruntime.get()}-ThirdPartyNotices.txt",
+        "onnxruntime-qnn-${libs.versions.qnn.ep.get()}-ThirdPartyNotices.txt",
         "qnn-runtime-${libs.versions.qnn.runtime.get()}-NOTICE.txt",
     )
     val dir = file("src/main/assets/licences")

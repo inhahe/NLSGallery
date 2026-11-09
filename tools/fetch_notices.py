@@ -1,12 +1,19 @@
 """Puts the third-party notices of the native libraries the app ships into
-app/src/main/assets/licences, for Settings -> About -> Credits and licences: ONNX Runtime's
-ThirdPartyNotices.txt (the code compiled into its native library: protobuf, Eigen, ...; it is in
-its repository, not its AAR) and the NOTICE.txt in Qualcomm's QNN runtime AAR (not packaged
-into the APK by Gradle), each for the version gradle/libs.versions.toml names, the file names
-carrying it. Notices of other versions are removed. Run it after changing either version: the
-build refuses to run until the notices match (app/build.gradle.kts, checkNotices).
+app/src/main/assets/licences, for Settings -> About -> Credits and licences, each for the version
+gradle/libs.versions.toml names (the file name carries it):
 
-Any Python 3; reads the QNN AAR from Gradle's cache when it is there, else from Maven Central.
+- ONNX Runtime's ThirdPartyNotices.txt, from its repository (the code compiled into its native
+  library: protobuf, Eigen, ...; its AAR has none);
+- the QNN execution provider's ThirdPartyNotices.txt, from its repository (onnxruntime-qnn);
+- the NOTICE.txt in Qualcomm's QNN runtime AAR, which Gradle does not package into the APK.
+
+A file already there is kept when it reads as that notice (its opening words), else fetched again
+(an interrupted download, an error page). Anything else in the folder is removed. Run it after
+changing one of those versions: the build refuses to run until the notices match
+(app/build.gradle.kts, checkNotices).
+
+Any Python 3; reads the QNN runtime's AAR from Gradle's cache when it is there, else from Maven
+Central.
 """
 import io
 import pathlib
@@ -48,23 +55,35 @@ def qnn_aar(v):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    ort, qnn = version('onnxruntime'), version('qnn-runtime')
+    ort, ep, qnn = version('onnxruntime'), version('qnn-ep'), version('qnn-runtime')
+    # File name: (how its text begins, how to get it).
     wanted = {
-        f'onnxruntime-{ort}-ThirdPartyNotices.txt':
-            lambda: text(fetch(f'https://raw.githubusercontent.com/microsoft/onnxruntime/v{ort}/ThirdPartyNotices.txt')),
-        f'qnn-runtime-{qnn}-NOTICE.txt':
-            lambda: text(zipfile.ZipFile(io.BytesIO(qnn_aar(qnn))).read('NOTICE.txt')),
+        f'onnxruntime-{ort}-ThirdPartyNotices.txt': (
+            'THIRD PARTY SOFTWARE NOTICES AND INFORMATION',
+            lambda: text(fetch(f'https://raw.githubusercontent.com/microsoft/onnxruntime/v{ort}/ThirdPartyNotices.txt'))),
+        f'onnxruntime-qnn-{ep}-ThirdPartyNotices.txt': (
+            'THIRD PARTY SOFTWARE NOTICES AND INFORMATION',
+            lambda: text(fetch(f'https://raw.githubusercontent.com/onnxruntime/onnxruntime-qnn/v{ep}/ThirdPartyNotices.txt'))),
+        f'qnn-runtime-{qnn}-NOTICE.txt': (
+            'This Notice.txt file contains',
+            lambda: text(zipfile.ZipFile(io.BytesIO(qnn_aar(qnn))).read('NOTICE.txt'))),
     }
-    for name, get in wanted.items():
+    for name, (start, get) in wanted.items():
         path = OUT / name
-        if not path.exists():
-            body = get().replace('\r\n', '\n')
-            path.write_text(body, encoding='utf-8', newline='\n')
+        if path.exists() and path.read_text(encoding='utf-8').lstrip('﻿').startswith(start):
+            print(f'{name}: {path.stat().st_size} bytes (kept)')
+            continue
+        body = get().replace('\r\n', '\n').lstrip('﻿')
+        if not body.startswith(start):
+            raise SystemExit(f'{name}: what came does not read as the notice: {body[:80]!r}')
+        part = path.with_name(path.name + '.part')
+        part.write_text(body, encoding='utf-8', newline='\n')
+        part.replace(path)
         print(f'{name}: {path.stat().st_size} bytes')
-    for old in OUT.glob('*.txt'):
-        if old.name not in wanted:
-            old.unlink()
-            print(f'removed {old.name}')
+    for other in OUT.iterdir():
+        if other.name not in wanted:
+            other.unlink()
+            print(f'removed {other.name}')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,15 @@
+{
+  "uniqueId": "pytorch/pytorch",
+  "name": "PyTorch: BLIP's resizing",
+  "description": "The antialiased bicubic resize BLIP's image processor uses, reproduced from ATen's UpSampleKernelAVXAntialias.",
+  "website": "https://github.com/pytorch/pytorch",
+  "developers": [
+    {
+      "name": "Facebook, Inc. and the PyTorch contributors"
+    }
+  ],
+  "licenses": [
+    "PyTorch-BSD-3-Clause"
+  ],
+  "tag": "port"
+}

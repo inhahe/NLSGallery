@@ -189,13 +189,17 @@ screen. The gallery stays composed underneath (undrawn, out of the semantics tre
 blocked by the covering screen), so closing one returns to the same scroll position, tab and
 search results. Settings ends with About: the version, and *Credits and licences*
 (`CreditsScreen`): the list AboutLibraries' Gradle plugin gathers at build time from every
-dependency's published licence, with entries of our own for the data and models
-(`app/aboutlibraries`: GeoNames, the Umm al-Qura table, BLIP, CRAFT, EasyOCR, MiniLM, BERT's
-vocabulary, each with its licence's text and copyright line), those first; a licence opens in the
-app, not on the web; then the third-party notices of the native libraries' own parts
-(`assets/licences`, `tools/fetch_notices.py`: ONNX Runtime's ThirdPartyNotices, which is in its
-repository and not its AAR, and the NOTICE.txt in Qualcomm's QNN runtime AAR, which Gradle does
-not package), reflowed to the screen.
+dependency's published licence, with entries of our own (`app/aboutlibraries`, by tag): the data
+and models (GeoNames, the Umm al-Qura table, BLIP, CRAFT, EasyOCR, MiniLM, BERT's vocabulary),
+then the code `core/` reproduces from other projects (MiniSearch, Pillow's and PyTorch's resizing,
+OpenCV's imgproc, Hugging Face's tokenizers and transformers), each with its licence's text and
+copyright line, and the MIT and BSD libraries' own licences in place of SPDX's templates (ONNX
+Runtime, its QNN execution provider, protobuf); a licence opens in the app, not on the web; then
+the third-party notices of the native libraries' own parts (`assets/licences`,
+`tools/fetch_notices.py`: ONNX Runtime's and its QNN execution provider's ThirdPartyNotices, which
+are in their repositories and not their AARs, and the NOTICE.txt in Qualcomm's QNN runtime AAR,
+which Gradle does not package), reflowed to the screen. The list keeps its place while a notice
+is read, and Settings its scroll while Credits is shown (`AppRoot` holds it).
 
 ### Viewer
 
@@ -513,7 +517,12 @@ AGP 9.4.1, Kotlin 2.4.21, Gradle 9.8.2 (as the user's other Android apps), compi
 minSdk 29, targetSdk 36. One APK per ABI (arm64-v8a, x86_64): ONNX Runtime's native library is
 ~35 MB each. Version in `gradle.properties` (`appVersion`, `appVersionCode` checked to agree).
 Licences: AboutLibraries' strict mode fails the build for a dependency under a licence not
-allowed in `app/build.gradle.kts` (Apache 2.0, MIT, BSD-3-Clause, the data's and models', and
-Qualcomm's AI Hub Model License for its QNN runtime alone), and `checkNotices` (before every
-build) fails it when the native libraries' notices are not those of the versions built with. Its
-generated list (`R.raw.aboutlibraries`) is kept from resource shrinking (`res/raw/keep.xml`).
+allowed in `app/build.gradle.kts` (Apache 2.0, MIT, BSD-3-Clause, the data's, models' and ported
+code's, the MIT and BSD libraries' own with their copyright lines, and Qualcomm's AI Hub Model
+License for its QNN runtime alone), or without a licence (`requireLicense`); BOMs, which ship no
+code, are left out. An entry in `app/aboutlibraries` adds a library's real licence to its POM's
+(the plugin merges), and the screen shows only licences with their own text (`creditsList`), so
+an MIT library shows its copyright line, not SPDX's template; `CreditsTest` fails for a shown
+licence that is a template. `checkNotices` (before every build) fails it when the native
+libraries' notices are not those of the versions built with. The generated list is found by its
+R id, so resource shrinking keeps it (renamed) without a keep rule.

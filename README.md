@@ -180,10 +180,13 @@ To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -st
 ## Credits
 
 Settings → About → *Credits and licences* lists everything the app is made with, each with its
-licence: the place names and AI models first, then the libraries, then the notices of the code
-built into the native libraries (ONNX Runtime, Qualcomm's QNN runtime). Among them: place names
-from [GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII`, `countryInfo`),
-licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the Umm al-Qura
-calendar's months (for Ramadan and Eid) from [hijridate](https://github.com/dralshehri/hijridate)'s
-table (MIT); BLIP (BSD-3-Clause), CRAFT (MIT), EasyOCR and all-MiniLM-L6-v2 (Apache 2.0), whose
-weights the app downloads from their publishers.
+licence and copyright line: the place names and AI models first, then the code reproduced from
+other projects, then the libraries, then the notices of the code built into the native libraries
+(ONNX Runtime, its QNN execution provider, Qualcomm's QNN runtime). Among them: place names from
+[GeoNames](https://www.geonames.org/) (`cities1000`, `admin1CodesASCII`, `countryInfo`), licensed
+under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the Umm al-Qura calendar's
+months (for Ramadan and Eid) from [hijridate](https://github.com/dralshehri/hijridate)'s table
+(MIT); BLIP (BSD-3-Clause), CRAFT (MIT), EasyOCR and all-MiniLM-L6-v2 (Apache 2.0), whose weights
+the app downloads from their publishers; and MiniSearch (MIT), Pillow's and PyTorch's resizing
+(MIT-CMU, BSD-3-Clause), OpenCV and Hugging Face's tokenizers and transformers (Apache 2.0), whose
+code the app reproduces to match thumbsup2.

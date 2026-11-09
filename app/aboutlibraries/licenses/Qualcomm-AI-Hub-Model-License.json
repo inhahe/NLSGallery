@@ -1,0 +1,6 @@
+{
+  "name": "Qualcomm AI Hub Model License",
+  "url": "https://softwarecenter.qualcomm.com/api/download/software/licenses/ai_model_hub/v1/LICENSE.pdf",
+  "content": "Qualcomm's QNN runtime is used under Qualcomm Innovation Center's AI Model Hub License (https://softwarecenter.qualcomm.com/api/download/software/licenses/ai_model_hub/v1/LICENSE.pdf), which allows it to be distributed in object code as part of an application, as it is here (it runs the text detector on a Snapdragon GPU). The notices of the open-source code inside it are at the end of this list.",
+  "hash": "Qualcomm-AI-Hub-Model-License"
+}

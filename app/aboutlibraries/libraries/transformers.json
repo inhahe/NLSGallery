@@ -1,0 +1,15 @@
+{
+  "uniqueId": "huggingface/transformers",
+  "name": "Hugging Face Transformers: BLIP's processing",
+  "description": "BLIP's image processing and greedy generation, as transformers runs them, reproduced. Copyright 2018- The Hugging Face team. All rights reserved.",
+  "website": "https://github.com/huggingface/transformers",
+  "developers": [
+    {
+      "name": "Hugging Face"
+    }
+  ],
+  "licenses": [
+    "Apache-2.0"
+  ],
+  "tag": "port"
+}

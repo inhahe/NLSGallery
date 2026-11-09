@@ -1,0 +1,15 @@
+{
+  "uniqueId": "python-pillow/Pillow",
+  "name": "Pillow: EasyOCR's resizing",
+  "description": "The antialiased bicubic resize EasyOCR's reader sees text lines through, reproduced from Pillow's Resample.c.",
+  "website": "https://github.com/python-pillow/Pillow",
+  "developers": [
+    {
+      "name": "Secret Labs AB, Fredrik Lundh, Jeffrey A. Clark and contributors"
+    }
+  ],
+  "licenses": [
+    "Pillow-MIT-CMU"
+  ],
+  "tag": "port"
+}

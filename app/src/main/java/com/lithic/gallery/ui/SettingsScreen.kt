@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -53,7 +53,11 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Unit, onCredits: () -> Unit) {
+/**
+ * The settings, scrolled by [scroll] (kept by the caller, so coming back from the screens they
+ * open, Credits and licences say, finds them where they were).
+ */
+fun SettingsScreen(vm: GalleryViewModel, scroll: ScrollState, onBack: () -> Unit, onModels: () -> Unit, onCredits: () -> Unit) {
     BackHandler(onBack = onBack)
     val s by vm.settings.collectAsState()
     val ai by vm.aiStatus.collectAsState()
@@ -66,7 +70,7 @@ fun SettingsScreen(vm: GalleryViewModel, onBack: () -> Unit, onModels: () -> Uni
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") } },
         )
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(scroll)) {
             Section("Thumbnails")
             Choice("Justified rows", "Rows filled edge to edge; each picture whole, sized by its shape",
                 s.layoutMode == LayoutMode.JUSTIFIED) { set { it.copy(layoutMode = LayoutMode.JUSTIFIED) } }

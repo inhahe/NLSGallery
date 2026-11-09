@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -147,6 +148,8 @@ private fun AppRoot(vm: GalleryViewModel) {
 
     var routeName by rememberSaveable { mutableStateOf("gallery") }
     var viewerIndex by rememberSaveable { mutableIntStateOf(0) }
+    // Settings' scroll, kept while a screen it opens is shown; opened from the gallery, it starts at the top.
+    var settingsScroll by remember { mutableStateOf(ScrollState(0)) }
     val route: Route = when (routeName) {
         "viewer" -> if (vm.viewerList.isEmpty()) Route.Gallery else Route.Viewer(viewerIndex)
         "settings" -> Route.Settings
@@ -171,7 +174,7 @@ private fun AppRoot(vm: GalleryViewModel) {
             GalleryScreen(
                 vm,
                 onOpen = { i -> viewerIndex = i; routeName = "viewer" },
-                onSettings = { routeName = "settings" },
+                onSettings = { settingsScroll = ScrollState(0); routeName = "settings" },
                 onModels = { routeName = "models" },
             )
         }
@@ -181,7 +184,7 @@ private fun AppRoot(vm: GalleryViewModel) {
             Box(Modifier.fillMaxSize().pointerInput(Unit) {}) {
                 when (route) {
                     is Route.Viewer -> ViewerScreen(vm, route.index, onBack = { routeName = "gallery" })
-                    Route.Settings -> SettingsScreen(vm, onBack = { routeName = "gallery" }, onModels = { routeName = "models" },
+                    Route.Settings -> SettingsScreen(vm, settingsScroll, onBack = { routeName = "gallery" }, onModels = { routeName = "models" },
                         onCredits = { routeName = "credits" })
                     Route.Models -> ModelsScreen(vm, onBack = { routeName = "gallery" })
                     Route.Credits -> CreditsScreen(onBack = { routeName = "settings" })
