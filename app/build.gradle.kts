@@ -15,12 +15,14 @@ val keystoreProperties = rootProject.file("keystore.properties")
 
 // The version: appVersion in gradle.properties, major.minor.patch; versionCode is derived from it.
 val appVersion = providers.gradleProperty("appVersion").get()
-val appVersionCode = appVersion.split('.').map { it.toIntOrNull() }.let { parts ->
-    val (major, minor, patch) = parts.filterNotNull().takeIf { it.size == 3 && parts.size == 3 }
-        ?: error("appVersion '$appVersion' in gradle.properties must be major.minor.patch")
-    require(minor < 100 && patch < 100) { "appVersion '$appVersion': minor and patch must stay below 100" }
-    major * 10000 + minor * 100 + patch
-}
+// Plain numbers, as the release tag v<appVersion> shows them: no signs, no leading zeros.
+val appVersionCode = Regex("""(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)""").matchEntire(appVersion)
+    ?.destructured?.let { (a, b, c) ->
+        val (major, minor, patch) = listOf(a, b, c).map { it.toInt() }
+        require(minor < 100 && patch < 100) { "appVersion '$appVersion': minor and patch must stay below 100" }
+        major * 10000 + minor * 100 + patch
+    }
+    ?: error("appVersion '$appVersion' in gradle.properties must be major.minor.patch in plain numbers")
 providers.gradleProperty("appVersionCode").orNull.let { written ->
     require(written?.toIntOrNull() == appVersionCode) {
         "appVersionCode in gradle.properties must be $appVersionCode for appVersion $appVersion, " +
