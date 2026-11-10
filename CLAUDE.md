@@ -51,7 +51,9 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
   notices match). Data or models the app uses, and code reproduced from another project, get an
   entry in `app/aboutlibraries` (tag `data`, `model` or `port`).
 - Release: `build-release.bat` (signed with the key `keystore.properties` names, kept in
-  `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`).
+  `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`),
+  `release.bat` (publishes `appVersion` on GitHub, inhahe/NLSGallery, once `main` is pushed and
+  the tests pass; `--dry-run` publishes nothing).
   Release builds are minified: after touching reflection-sensitive code (ONNX Runtime, Room,
   serialization, WorkManager), run the release APK on the emulator, not only the debug one.
 

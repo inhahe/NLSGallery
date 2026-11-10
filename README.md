@@ -167,9 +167,14 @@ on the processor; switched off, the processor reads all the text.
 
 ## Installing
 
-With the phone connected by USB (USB debugging on in Developer options, and this computer
-allowed when the phone asks), `install-on-phone.bat` builds the release version and installs
-it. Run it again to update: descriptions, settings and models are kept.
+On the phone, download `NLSGallery-<version>-arm64-v8a.apk` from the
+[latest release](https://github.com/inhahe/NLSGallery/releases/latest) and open it, allowing your
+browser or file manager to install apps when asked. A newer version installs over an older one:
+descriptions, settings and models are kept (uninstalling deletes them).
+
+From a computer, with the phone connected by USB (USB debugging on in Developer options, and
+this computer allowed when the phone asks), `install-on-phone.bat` builds the release version
+and installs it. Run it again to update.
 
 **Back up the release key** (`C:\Users\Computer\.android\lithic-gallery-release.jks`) **and
 `keystore.properties`**, which holds its password. Android installs an update only if it is
@@ -194,8 +199,12 @@ keyPassword=...
 To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -storetype PKCS12
 -alias lithic-gallery -keyalg RSA -keysize 4096 -validity 36500`.
 
+`release.bat` publishes the version in `gradle.properties` as a GitHub release: it checks that
+this is `main` as GitHub has it and that the version is new, runs the tests, builds, and attaches
+the signed APKs and R8's mapping file (`--dry-run` shows the release notes and publishes nothing).
+
 `gradlew :core:test` compares the on-device pipeline with the output of
-[thumbsup2](../thumbsup2), the desktop program whose AI pipeline the app reproduces (see
+[thumbsup2](https://github.com/inhahe/thumbsup), the desktop program whose AI pipeline the app reproduces (see
 `tools/README.md` for the test data and weights it needs). `design.md` describes how it works.
 
 ## Credits
