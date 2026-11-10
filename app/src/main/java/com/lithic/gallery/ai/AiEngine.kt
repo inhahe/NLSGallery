@@ -268,43 +268,52 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      * Whether the models for [part] still work on input they handled before, like [like] (a file
      * they just failed on). Captions: a file whose caption they made (BLIP sees every picture at
      * 384x384, so any will do). Text: one whose text they read at [like]'s detail or more (the
-     * nearest first: more detail needs more memory, so it proves at least as much).
-     * Embeddings: text as long as MiniLM reads. Of the [REFERENCE_CANDIDATES] newest such files,
-     * the models run on the first that can be read now, once: any number before it may be gone
-     * (deleted since the library's last sync). True or false is the models' answer; null means there
-     * was nothing to try them on. Nothing is saved.
+     * nearest first: more detail needs more memory, so it working there proves at least as much,
+     * but failing there proves nothing about [like]'s: no answer). Embeddings: text as long as
+     * MiniLM reads. The files are looked through [REFERENCE_PAGE] at a time, newest first, and the
+     * models run once, on the first that can be read now: any number may be gone (deleted since
+     * the library's last sync), costing an open each. True or false is the models' answer; null
+     * means there was nothing to try them on, or only files that open but cannot be read
+     * ([REFERENCE_DECODES] of them). Nothing is saved.
      */
     suspend fun modelsStillWork(part: Part, like: MediaEntity?, s: Settings): Boolean? = mutex.withLock {
         withContext(Dispatchers.Default) {
             if (part == Part.EMBEDDINGS) {
                 return@withContext modelWork("the embedding probe") { open(captions = false, ocr = false, s); minilm!!.embed(PROBE_TEXT) } is Attempt.Done
             }
-            val candidates = when (part) {
-                Part.CAPTIONS -> dao.captionedReferences(REFERENCE_CANDIDATES)
-                else -> {
-                    val canvas = like?.let { s.textDetail.canvasFor(it.folderCategory, it.isVideo) } ?: 0
-                    fun canvasOf(m: MediaEntity) = s.textDetail.canvasFor(m.folderCategory, m.isVideo)
-                    dao.readReferences(REFERENCE_CANDIDATES)
-                        .filter { canvasOf(it) >= canvas }
-                        .sortedBy { canvasOf(it) } // stable: newest first within each detail
+            fun canvasOf(m: MediaEntity) = s.textDetail.canvasFor(m.folderCategory, m.isVideo)
+            val canvas = like?.let { canvasOf(it) } ?: 0
+            var offset = 0
+            var decodes = 0
+            do {
+                val page = if (part == Part.CAPTIONS) dao.captionedReferences(REFERENCE_PAGE, offset)
+                    else dao.readReferences(REFERENCE_PAGE, offset)
+                offset += page.size
+                val candidates = if (part == Part.CAPTIONS) page
+                    else page.filter { canvasOf(it) >= canvas }.sortedBy { canvasOf(it) } // stable: newest first within each detail
+                for (reference in candidates) {
+                    if (!canOpen(reference)) continue // gone: the next one
+                    if (++decodes > REFERENCE_DECODES) return@withContext null
+                    val frames = try {
+                        frames(reference, captions = part == Part.CAPTIONS)
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        continue // opens but cannot be read now: the next one
+                    } catch (e: OutOfMemoryError) {
+                        return@withContext false // no memory even to read a picture they handled
+                    }
+                    if (frames.isEmpty()) continue
+                    val ran = modelWork("the ${part.phase} probe") {
+                        open(captions = part == Part.CAPTIONS, ocr = part == Part.TEXT, s)
+                        if (part == Part.CAPTIONS) captionOf(frames) else textOf(reference, frames, s)
+                    }
+                    return@withContext when {
+                        ran is Attempt.Done -> true
+                        like != null && canvasOf(reference) > canvas -> null // more detail than like's
+                        else -> false
+                    }
                 }
-            }
-            for (reference in candidates) {
-                val frames = try {
-                    frames(reference, captions = part == Part.CAPTIONS)
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    continue // gone or unreadable now: the next one
-                } catch (e: OutOfMemoryError) {
-                    return@withContext false // no memory even to read a picture they handled
-                }
-                if (frames.isEmpty()) continue
-                val ran = modelWork("the ${part.phase} probe") {
-                    open(captions = part == Part.CAPTIONS, ocr = part == Part.TEXT, s)
-                    if (part == Part.CAPTIONS) captionOf(frames) else textOf(reference, frames, s)
-                }
-                return@withContext ran is Attempt.Done
-            }
+            } while (page.size == REFERENCE_PAGE)
             null
         }
     }
@@ -465,12 +474,14 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             else -> 800_000L
         }
 
+        /** How many files a probe reads from the library at a time, looking for one it can read. */
+        internal const val REFERENCE_PAGE = 200
+
         /**
-         * How many of the newest files a probe looks through for one it can read. The models run
-         * once, on the first readable one; the others cost only a failed open, so this bounds no
-         * model work, only a run of files deleted since the library's last sync.
+         * How many files that open but cannot be read (or videos that give no frames) a probe
+         * tries before it gives no answer: each costs a full decode, under the engine's lock.
          */
-        private const val REFERENCE_CANDIDATES = 200
+        private const val REFERENCE_DECODES = 5
 
         /** Text that fills MiniLM's 256 tokens, the most it reads: as heavy as any description. */
         private val PROBE_TEXT = List(300) { "photograph" }.joinToString(" ")

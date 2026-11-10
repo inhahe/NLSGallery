@@ -263,23 +263,26 @@ interface AiDao {
     suspend fun withoutEmbedding(model: String): List<DescriptionEntity>
 
     /**
-     * Files whose caption the models made, photos first, the latest first: what the caption models
-     * are tried on again to see whether they still work.
+     * Files whose caption the models made, photos first, the latest first, [limit] from [offset]:
+     * what the caption models are tried on again to see whether they still work.
      */
     @Query(
         """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
            WHERE d.caption IS NOT NULL AND d.error IS NULL
-           ORDER BY m.isVideo, d.describedAt DESC LIMIT :limit"""
+           ORDER BY m.isVideo, d.describedAt DESC LIMIT :limit OFFSET :offset"""
     )
-    suspend fun captionedReferences(limit: Int): List<MediaEntity>
+    suspend fun captionedReferences(limit: Int, offset: Int = 0): List<MediaEntity>
 
-    /** Files whose text the models read, photos first, the latest first: the text models' references. */
+    /**
+     * Files whose text the models read, photos first, the latest first, [limit] from [offset]: the
+     * text models' references.
+     */
     @Query(
         """SELECT m.* FROM media m JOIN ai_descriptions d ON d.hash = m.aiKey
            WHERE d.ocr IS NOT NULL AND d.error IS NULL
-           ORDER BY m.isVideo, d.describedAt DESC LIMIT :limit"""
+           ORDER BY m.isVideo, d.describedAt DESC LIMIT :limit OFFSET :offset"""
     )
-    suspend fun readReferences(limit: Int): List<MediaEntity>
+    suspend fun readReferences(limit: Int, offset: Int = 0): List<MediaEntity>
 
     /**
      * Embedding [e] saved only if its description is still the text [of] it was made from (not

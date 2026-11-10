@@ -289,9 +289,10 @@ class DescribeFailureTest {
     @Test
     fun aProbePassesOverReferencesThatCannotBeReadNow() = runBlocking {
         // The newest captioned files cannot be opened (deleted since the library's last sync, as when
-        // the latest photos are deleted in another app): the probe passes over all of them.
+        // the latest photos are deleted in another app), more of them than a page of references:
+        // the probe passes over all of them.
         val stamp = System.nanoTime()
-        val media = (2147483001L..2147483005L).map { id ->
+        val media = (2147483001L until 2147483001L + AiEngine.REFERENCE_PAGE + 5).map { id ->
             val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                 .buildUpon().appendPath("$id").build()
             item(gone, "describe-failure-test-reference-$id-$stamp").copy(id = id)
@@ -301,13 +302,15 @@ class DescribeFailureTest {
             media.forEachIndexed { i, m ->
                 dao.saveDescribed(DescriptionEntity(m.aiKey!!, "a bird", null, "", Long.MAX_VALUE / 2 - i, null), null)
             }
-            val references = dao.captionedReferences(200)
+            val references = dao.captionedReferences(media.size + AiEngine.REFERENCE_PAGE)
             assertThat(references.take(media.size).map { it.aiKey }).containsExactlyElementsIn(media.map { it.aiKey })
-            // A photo after them must decode now, as the probe reads it: the library may also list
-            // other files deleted since its last sync.
-            assumeTrue("no other described photo can be read now", references.drop(media.size).any { m ->
-                !m.isVideo && runCatching { MediaDecoding.decodeImage(context.contentResolver, m.contentUri) }.isSuccess
-            })
+            // The first after them that opens must decode, as the probe reads it: the library may
+            // also list other files deleted since its last sync.
+            val next = references.drop(media.size).firstOrNull { m ->
+                runCatching { context.contentResolver.openFileDescriptor(m.contentUri, "r")?.use { true } }.getOrNull() == true
+            }
+            assumeTrue("no other described photo can be read now", next != null && !next.isVideo &&
+                runCatching { MediaDecoding.decodeImage(context.contentResolver, next.contentUri) }.isSuccess)
             assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
         } finally {
             app.db.media().delete(media.map { it.id })

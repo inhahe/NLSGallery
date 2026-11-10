@@ -251,10 +251,12 @@ synced) and `MediaDetails`.
   third sets it aside). The pass describing another file shows the models work; so does a probe
   (`modelsStillWork`), run when six failures come with none described between or a pass ends
   with suspects: the same models (through the same code as `describe`) on a real file they
-  handled before, once: the first of the latest 200 that can be read now, passing over any
-  deleted since the library's last sync (the latest photos deleted in another app, say). For
-  captions any captioned file will do (BLIP sees every picture at 384x384); for text, one read
-  at the suspect's detail or more (more needs more memory); for MiniLM, text of the most it
+  handled before, once: the first that can be read now, newest first, read from the library 200
+  at a time, passing over any number deleted since its last sync (the latest photos deleted in
+  another app, say) at the cost of an open each, and over at most five that open but cannot be
+  decoded. For captions any captioned file will do (BLIP sees every picture at 384x384); for
+  text, one read at the suspect's detail or more (more needs more memory, so working there
+  proves at least as much, while failing there is no answer); for MiniLM, text of the most it
   reads. If the probe fails, or the models cannot even be opened (`ModelsUnavailable`: removed
   during the run, say; no file is noted for it), the models are failing just now: the run
   stops, blaming none, and is retried later. If there is nothing to probe on, the pass stops
