@@ -269,9 +269,10 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
      * they just failed on). Captions: a file whose caption they made (BLIP sees every picture at
      * 384x384, so any will do). Text: one whose text they read at [like]'s detail or more (the
      * nearest first: more detail needs more memory, so it proves at least as much).
-     * Embeddings: text as long as MiniLM reads. Up to [REFERENCE_TRIES] files are tried, newest
-     * first, passing over any that cannot be read now. True or false is the models' answer; null
-     * means there was nothing to try them on. Nothing is saved.
+     * Embeddings: text as long as MiniLM reads. Of the [REFERENCE_CANDIDATES] newest such files,
+     * the models run on the first that can be read now, once: any number before it may be gone
+     * (deleted since the library's last sync). True or false is the models' answer; null means there
+     * was nothing to try them on. Nothing is saved.
      */
     suspend fun modelsStillWork(part: Part, like: MediaEntity?, s: Settings): Boolean? = mutex.withLock {
         withContext(Dispatchers.Default) {
@@ -279,14 +280,13 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
                 return@withContext modelWork("the embedding probe") { open(captions = false, ocr = false, s); minilm!!.embed(PROBE_TEXT) } is Attempt.Done
             }
             val candidates = when (part) {
-                Part.CAPTIONS -> dao.captionedReferences(REFERENCE_TRIES)
+                Part.CAPTIONS -> dao.captionedReferences(REFERENCE_CANDIDATES)
                 else -> {
                     val canvas = like?.let { s.textDetail.canvasFor(it.folderCategory, it.isVideo) } ?: 0
                     fun canvasOf(m: MediaEntity) = s.textDetail.canvasFor(m.folderCategory, m.isVideo)
-                    dao.readReferences(200)
+                    dao.readReferences(REFERENCE_CANDIDATES)
                         .filter { canvasOf(it) >= canvas }
                         .sortedBy { canvasOf(it) } // stable: newest first within each detail
-                        .take(REFERENCE_TRIES)
                 }
             }
             for (reference in candidates) {
@@ -465,8 +465,12 @@ class AiEngine(private val context: Context, private val models: ModelManager, p
             else -> 800_000L
         }
 
-        /** How many files a probe tries before it gives no answer. */
-        internal const val REFERENCE_TRIES = 3
+        /**
+         * How many of the newest files a probe looks through for one it can read. The models run
+         * once, on the first readable one; the others cost only a failed open, so this bounds no
+         * model work, only a run of files deleted since the library's last sync.
+         */
+        private const val REFERENCE_CANDIDATES = 200
 
         /** Text that fills MiniLM's 256 tokens, the most it reads: as heavy as any description. */
         private val PROBE_TEXT = List(300) { "photograph" }.joinToString(" ")

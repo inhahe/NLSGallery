@@ -13,6 +13,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
 import com.lithic.gallery.ai.AiEngine
+import com.lithic.gallery.ai.MediaDecoding
 import com.lithic.gallery.core.ai.MiniLmEmbedder
 import com.lithic.gallery.data.DescriptionEntity
 import com.lithic.gallery.data.MediaEntity
@@ -286,26 +287,31 @@ class DescribeFailureTest {
     }
 
     @Test
-    fun aProbePassesOverAReferenceThatCannotBeReadNow() = runBlocking {
-        // The newest captioned file is one that cannot be opened: the probe tries the next.
-        val key = "describe-failure-test-reference-${System.nanoTime()}"
-        val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            .buildUpon().appendPath("2147483001").build()
-        val media = item(gone, key).copy(id = 2147483001)
+    fun aProbePassesOverReferencesThatCannotBeReadNow() = runBlocking {
+        // The newest captioned files cannot be opened (deleted since the library's last sync, as when
+        // the latest photos are deleted in another app): the probe passes over all of them.
+        val stamp = System.nanoTime()
+        val media = (2147483001L..2147483005L).map { id ->
+            val gone = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                .buildUpon().appendPath("$id").build()
+            item(gone, "describe-failure-test-reference-$id-$stamp").copy(id = id)
+        }
         try {
-            app.db.media().upsert(listOf(media))
-            dao.saveDescribed(DescriptionEntity(key, "a bird", null, "", Long.MAX_VALUE / 2, null), null)
-            val references = dao.captionedReferences(AiEngine.REFERENCE_TRIES)
-            assertThat(references.first().aiKey).isEqualTo(key)
-            // One after it must be readable now: the library may list files deleted since its last
-            // sync, which the probe passes over too, and then has nothing to try.
-            assumeTrue("no other described picture can be read now", references.drop(1).any { m ->
-                runCatching { context.contentResolver.openInputStream(m.contentUri)?.use { true } }.getOrNull() == true
+            app.db.media().upsert(media)
+            media.forEachIndexed { i, m ->
+                dao.saveDescribed(DescriptionEntity(m.aiKey!!, "a bird", null, "", Long.MAX_VALUE / 2 - i, null), null)
+            }
+            val references = dao.captionedReferences(200)
+            assertThat(references.take(media.size).map { it.aiKey }).containsExactlyElementsIn(media.map { it.aiKey })
+            // A photo after them must decode now, as the probe reads it: the library may also list
+            // other files deleted since its last sync.
+            assumeTrue("no other described photo can be read now", references.drop(media.size).any { m ->
+                !m.isVideo && runCatching { MediaDecoding.decodeImage(context.contentResolver, m.contentUri) }.isSuccess
             })
             assertThat(app.ai.modelsStillWork(AiEngine.Part.CAPTIONS, null, captionsOnly)).isTrue()
         } finally {
-            app.db.media().delete(listOf(media.id))
-            erase(key)
+            app.db.media().delete(media.map { it.id })
+            media.forEach { erase(it.aiKey!!) }
         }
     }
 

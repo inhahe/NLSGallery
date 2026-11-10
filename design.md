@@ -250,8 +250,9 @@ synced) and `MediaDetails`.
   memory); failing again, it is blamed (counted, `recordModelFailure`, at most once a run; the
   third sets it aside). The pass describing another file shows the models work; so does a probe
   (`modelsStillWork`), run when six failures come with none described between or a pass ends
-  with suspects: the same models (through the same code as `describe`) on real files they
-  handled before, up to three, newest first, passing over any that cannot be read now. For
+  with suspects: the same models (through the same code as `describe`) on a real file they
+  handled before, once: the first of the latest 200 that can be read now, passing over any
+  deleted since the library's last sync (the latest photos deleted in another app, say). For
   captions any captioned file will do (BLIP sees every picture at 384x384); for text, one read
   at the suspect's detail or more (more needs more memory); for MiniLM, text of the most it
   reads. If the probe fails, or the models cannot even be opened (`ModelsUnavailable`: removed
