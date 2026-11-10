@@ -37,6 +37,12 @@ tasks.test {
     // tools/fetch_weights.py). Tests needing files that are absent are skipped, saying which.
     systemProperty("gallery.tools", toolsDir.asFile.absolutePath)
     systemProperty("gallery.graphs", modelGraphs.asFile.absolutePath)
+    // Read by path, so declared: a changed weight, image, reference, shipped graph or gazetteer
+    // runs the tests again instead of taking their last result (up to date, or from the build cache).
+    inputs.files(
+        toolsDir.dir("reference"), toolsDir.dir("testdata"), toolsDir.dir("weights"), modelGraphs,
+        rootProject.layout.projectDirectory.file("app/src/main/assets/places.bin"),
+    ).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("testFiles")
     maxHeapSize = "4g"
     testLogging {
         events("failed", "skipped")
