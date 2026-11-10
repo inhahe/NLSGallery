@@ -1,0 +1,5 @@
+The first release on GitHub. NLSGallery shows every photo and video on the phone, sorted into tabs, and finds them when you describe them:
+
+- by what they show ("dog on a beach") or the text in them ("receipt"),
+- by when they were taken ("christmas", "beach last summer") and where ("sunset in hawaii"),
+- with AI (BLIP, EasyOCR, MiniLM) that runs on the phone: nothing about your pictures leaves it.

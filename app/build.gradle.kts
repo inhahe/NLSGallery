@@ -103,9 +103,12 @@ android {
         unitTests.all {
             it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED")
             // ModelManagerTest reads official weights by path: declared, so fetching or changing
-            // them runs the tests again instead of taking their last result.
+            // them runs the tests again instead of taking their last result. Without them its
+            // tests are skipped, or with -PrequireTestFiles (any value but false; release.bat) fail.
             it.inputs.files(rootProject.layout.projectDirectory.dir("tools/weights"))
                 .withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("officialWeights")
+            it.systemProperty("gallery.requireTestFiles",
+                providers.gradleProperty("requireTestFiles").map { p -> p != "false" }.getOrElse(false).toString())
         }
     }
 

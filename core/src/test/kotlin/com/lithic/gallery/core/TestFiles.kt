@@ -9,6 +9,7 @@ import java.io.File
  * Where the tests find thumbsup2's reference output and the files it was made from. Paths come
  * from core/build.gradle.kts. A test whose inputs are absent is skipped, naming the script that
  * creates them, rather than failing: the weights are 1.2 GB and the test images are downloaded.
+ * A release (release.bat) must not go out on skipped tests: there they fail.
  */
 object TestFiles {
     val tools = File(System.getProperty("gallery.tools") ?: error("gallery.tools not set; run through Gradle"))
@@ -21,9 +22,13 @@ object TestFiles {
 
     fun reference(name: String): JsonElement = json(File(reference, name))
 
-    /** [file], or the test is skipped saying what makes it. */
+    /** Whether a missing file fails the test instead of skipping it (release.bat asks this). */
+    private val mustExist = System.getProperty("gallery.requireTestFiles") == "true"
+
+    /** [file], or the test is skipped (failed, if [mustExist]) saying what makes it. */
     fun require(file: File, madeBy: String): File {
-        assumeTrue("$file is missing: run $madeBy", file.exists())
+        val missing = "$file is missing: run $madeBy"
+        if (mustExist) check(file.exists()) { missing } else assumeTrue(missing, file.exists())
         return file
     }
 

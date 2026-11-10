@@ -54,6 +54,15 @@ class ModelManagerTest {
 
     private fun failure() = (models.state.value[key] as? ModelState.Failed)?.message
 
+    /** The official weight file, or the test is skipped (failed under release.bat's -PrequireTestFiles). */
+    private fun official(): File {
+        val file = File("../tools/weights/$key/${models.sources.getValue(key).file}")
+        val missing = "$file is missing: run tools/fetch_weights.py"
+        if (System.getProperty("gallery.requireTestFiles") == "true") check(file.exists()) { missing }
+        else assumeTrue(missing, file.exists())
+        return file
+    }
+
     @Test
     fun aNewCopyOverOneThatFailedIsCheckedAgain() = runBlocking {
         val size = models.sources.getValue(key).size.toInt()
@@ -73,8 +82,7 @@ class ModelManagerTest {
 
     @Test
     fun aFileCopiedOverAVerifiedOneIsCheckedAgain() = runBlocking {
-        val official = File("../tools/weights/$key/${models.sources.getValue(key).file}")
-        assumeTrue("$official is missing: run tools/fetch_weights.py", official.exists())
+        val official = official()
         copyIn(official.readBytes(), 1_000_000_000_000)
         models.verifyCopied()
         assertThat(models.state.value[key]).isEqualTo(ModelState.Ready)
@@ -109,8 +117,7 @@ class ModelManagerTest {
 
     @Test
     fun aCompleteCopyIsCheckedNotDownloaded() = runBlocking {
-        val official = File("../tools/weights/$key/${models.sources.getValue(key).file}")
-        assumeTrue("$official is missing: run tools/fetch_weights.py", official.exists())
+        val official = official()
         copyIn(official.readBytes(), 1_000_000_000_000)
         assertThat(models.state.value[key]).isNotEqualTo(ModelState.Ready)
         models.download(listOf(key))

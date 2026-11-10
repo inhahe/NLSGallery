@@ -200,8 +200,10 @@ To make a new key: `keytool -genkeypair -keystore lithic-gallery-release.jks -st
 -alias lithic-gallery -keyalg RSA -keysize 4096 -validity 36500`.
 
 `release.bat` publishes the version in `gradle.properties` as a GitHub release: it checks that
-this is `main` as GitHub has it and that the version is new, runs the tests, builds, and attaches
-the signed APKs and R8's mapping file (`--dry-run` shows the release notes and publishes nothing).
+this is `main` as GitHub has it and that the version is new, runs the tests (a missing test file
+fails them there), builds, starts the release APK on an emulator if one is running, and publishes
+the signed APKs and R8's mapping file, with `changelogs/<appVersionCode>.txt` as what is new.
+`--dry-run` shows the release notes and what would stop a release, and publishes nothing.
 
 `gradlew :core:test` compares the on-device pipeline with the output of
 [thumbsup2](https://github.com/inhahe/thumbsup), the desktop program whose AI pipeline the app reproduces (see

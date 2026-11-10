@@ -21,7 +21,8 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
 
 - JDK 21 at `%USERPROFILE%\.jdks\jdk-21.0.12.1+1` (set `JAVA_HOME`), Gradle wrapper.
 - `gradlew :core:test`: the pipeline against thumbsup2. Needs `tools/testdata` and
-  `tools/weights` (see `tools/README.md`); tests whose files are absent are skipped, not failed.
+  `tools/weights` (see `tools/README.md`); tests whose files are absent are skipped, not failed
+  (failed under `-PrequireTestFiles`, which `release.bat` passes).
   The model tests take a few minutes; `CraftTilingTest` longer.
 - `gradlew :app:testDebugUnitTest`: category rules, caption text, model-failure blame, and
   (Robolectric, Room in memory) the search index kept up to date against one built afresh,
@@ -53,7 +54,8 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
 - Release: `build-release.bat` (signed with the key `keystore.properties` names, kept in
   `~/.android`, outside git), `install-on-phone.bat` (builds, installs over USB with `-r`),
   `release.bat` (publishes `appVersion` on GitHub, inhahe/NLSGallery, once `main` is pushed and
-  the tests pass; `--dry-run` publishes nothing).
+  the tests pass, with `changelogs/<appVersionCode>.txt` as what is new; with an emulator
+  running it starts the minified APK there first; `--dry-run` publishes nothing).
   Release builds are minified: after touching reflection-sensitive code (ONNX Runtime, Room,
   serialization, WorkManager), run the release APK on the emulator, not only the debug one.
 
@@ -62,7 +64,8 @@ departure goes in `design.md` under "Deliberate differences from thumbsup2", wit
 `appVersion` in `gradle.properties` (major.minor.patch) with `appVersionCode` =
 major×10000 + minor×100 + patch beside it; the build refuses them if they disagree. Bump it
 whenever the app is rebuilt to be installed for use or released: patch for fixes, minor for
-features, major for overhauls. Debug builds installed to test (on the emulator, or a phone
+features, major for overhauls. A version to be released also gets `changelogs/<appVersionCode>.txt`:
+what is new, in words for the people installing it (the release notes start with it). Debug builds installed to test (on the emulator, or a phone
 during development) do not count: they carry `-debug` and replace each other. 0.1.0 is the
 first build handed over.
 

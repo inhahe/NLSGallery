@@ -30,13 +30,17 @@ dependencies {
 
 val toolsDir = rootProject.layout.projectDirectory.dir("tools")
 val modelGraphs = rootProject.layout.projectDirectory.dir("app/src/main/assets/models")
+// -PrequireTestFiles (any value but false): a test whose files are absent fails, not skipped.
+val requireTestFiles = providers.gradleProperty("requireTestFiles").map { it != "false" }.getOrElse(false).toString()
 
 tasks.test {
     // Reference outputs (tools/reference), test images (tools/testdata, from
     // tools/fetch_test_images.py) and the official weight files (tools/weights, from
-    // tools/fetch_weights.py). Tests needing files that are absent are skipped, saying which.
+    // tools/fetch_weights.py). Tests needing files that are absent are skipped, saying which, or
+    // with -PrequireTestFiles (release.bat) fail.
     systemProperty("gallery.tools", toolsDir.asFile.absolutePath)
     systemProperty("gallery.graphs", modelGraphs.asFile.absolutePath)
+    systemProperty("gallery.requireTestFiles", requireTestFiles)
     // Read by path, so declared: a changed weight, image, reference, shipped graph or gazetteer
     // runs the tests again instead of taking their last result (up to date, or from the build cache).
     inputs.files(
